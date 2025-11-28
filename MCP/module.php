@@ -89,7 +89,7 @@ class MCP extends IPSModuleStrict
                         [
                             'name' => 'get-object',
                             'title' => 'Get Object Info',
-                            'description' => 'Get the object info for a given object ID. The output matches that of IPS_GetObject.',
+                            'description' => 'Get the object info for the Symcon object with the given object ID. The output matches that of IPS_GetObject.',
                             'inputSchema' => [
                                 'type' => 'object',
                                 'properties' => [
@@ -105,6 +105,46 @@ class MCP extends IPSModuleStrict
                             ],
                             'outputSchema' => [
                                 'type' => 'object',
+                                'properties' => [
+                                    'info' => [
+                                        'type' => 'object'
+                                    ]
+                                ],
+                                'required' => [
+                                    'info'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ]
+                        ],
+                        [
+                            'name' => 'get-name',
+                            'title' => 'Get Object Name',
+                            'description' => 'Get the name of the Symcon object with the given object ID.',
+                            'inputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'objectID' => [
+                                        'type' => 'number'
+                                    ],
+                                ],
+                                'required' => [
+                                    'objectID'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ],
+                            'outputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'name' => [
+                                        'type' => 'string'
+                                    ]
+                                ],
+                                'required' => [
+                                    'name'
+                                ],
+                                'additionalProperties' => false,
                                 '$schema' => 'http://json-schema.org/draft-07/schema#'
                             ]
                         ]
@@ -113,30 +153,40 @@ class MCP extends IPSModuleStrict
                 break;
 
             case 'tools/call':
+                $content = [];
                 switch ($request['params']['name']) {
+                    case 'get-name':
+                        $content = [
+                            'name' => IPS_GetName($request['params']['arguments']['objectID'])
+                        ];
+                        break;
+
                     case 'get-object':
-                        $result = IPS_GetObject($request['params']['arguments']['objectID']);
+                        $content = [
+                            'info' => IPS_GetObject($request['params']['arguments']['objectID'])
+                        ];
                         break;
 
                     case 'switch-boolean':
                         $this->SendDebug('Switch Variable', json_encode($request['params']['arguments']), 0);
                         RequestAction($request['params']['arguments']['variableID'], $request['params']['arguments']['value']);
-                        $result = [
-                            'content' => [
-                                [
-                                    'type' => 'text',
-                                    'text' => 'Successfully executed'
-                                ]
-                            ],
-                            'structuredContent' => [
-                                'success' => true
-                            ]
+                        $content = [
+                            'success' => true
                         ];
                         break;
 
                     default:
                         throw new Exception('Tool not found');
                 }
+                $result = [
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => json_encode($content)
+                        ]
+                    ],
+                    'structuredContent' => $content,
+                ];
                 break;
 
             case 'initialize':
