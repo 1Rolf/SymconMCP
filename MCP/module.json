@@ -1,0 +1,16 @@
+{
+    "id": "{169089DA-124D-B10E-25B0-6EFF25F483A7}",
+    "name": "MCP",
+    "url": "https://symcon.de",
+    "type": 0,
+    "vendor": "",
+    "aliases": [
+    ],
+    "parentRequirements": [
+    ],
+    "childRequirements": [
+    ],
+    "implemented": [
+    ],
+    "prefix": "MCP"
+}

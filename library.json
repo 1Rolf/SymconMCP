@@ -1,0 +1,12 @@
+{
+    "id": "{33E46B5B-0F80-28B0-B0DC-4B2B69A68F41}",
+    "name": "MCP",
+    "author": "Symcon GmbH",
+    "url": "https://symcon.de",
+    "compatibility": {
+        "version": "8.1"
+    },
+    "version": "1.0",
+    "build": 0,
+    "date": 0
+}
