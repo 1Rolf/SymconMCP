@@ -220,6 +220,78 @@ class MCP extends IPSModuleStrict
                                 'additionalProperties' => false,
                                 '$schema' => 'http://json-schema.org/draft-07/schema#'
                             ]
+                        ],
+                        [
+                            'name' => 'get-children',
+                            'title' => 'Get Children',
+                            'description' => 'Get the object info for all children of the Symcon object with the given object ID. For each child, the full object info as returned by IPS_GetObject will be included in the output. Required: You must provide a valid numeric objectID.',
+                            'inputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'objectID' => [
+                                        'type' => 'number',
+                                        'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.'
+                                    ],
+                                ],
+                                'required' => [
+                                    'objectID'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ],
+                            'outputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'children' => [
+                                        'type' => 'array',
+                                        'items' => [
+                                            'type' => 'object'
+                                        ]
+                                    ]
+                                ],
+                                'required' => [
+                                    'children'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ]
+                        ],
+                        [
+                            'name' => 'rename-object',
+                            'title' => 'Rename Object',
+                            'description' => 'Rename a Symcon object to the specified new name. Required: You must provide both a valid numeric objectID and a newName string.',
+                            'inputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'objectID' => [
+                                        'type' => 'number',
+                                        'description' => 'The numeric ID of the Symcon object to rename. This is a required integer identifier. Must be a valid objectID from the system.'
+                                    ],
+                                    'newName' => [
+                                        'type' => 'string',
+                                        'description' => 'The new name for the object. This is a required string parameter.'
+                                    ]
+                                ],
+                                'required' => [
+                                    'objectID',
+                                    'newName'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ],
+                            'outputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'success' => [
+                                        'type' => 'boolean'
+                                    ]
+                                ],
+                                'required' => [
+                                    'success'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ]
                         ]
                     ]
                 ];
@@ -259,6 +331,24 @@ class MCP extends IPSModuleStrict
                         }
                         $content = [
                             'objects' => $result
+                        ];
+                        break;
+
+                    case 'get-children':
+                        $result = [];
+
+                        foreach (IPS_GetChildrenIDs($request['params']['arguments']['objectID']) as $childID) {
+                            $result[] = IPS_GetObject($childID);
+                        }
+                        $content = [
+                            'children' => $result
+                        ];
+                        break;
+
+                    case 'rename-object':
+                        IPS_SetName($request['params']['arguments']['objectID'], $request['params']['arguments']['newName']);
+                        $content = [
+                            'success' => true
                         ];
                         break;
 
