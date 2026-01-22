@@ -79,12 +79,11 @@ fetch(SYMCON_HOOK_URL, {
         id: Math.floor(Math.random() * 1000000)
     })
 }).then(async (response) => {    
-    let responseJson = {};
+    let responseJson: any = {};
 
     // Decode and display the response body
     try {
         const responseText = await response.text();
-        console.log('Response body for tools/list (text):', responseText);
         
         // Try to parse as JSON if possible
         try {
@@ -98,7 +97,7 @@ fetch(SYMCON_HOOK_URL, {
         process.exit(1);
     }
 
-    for (const tool of responseJson.result.tools) {
+    for (const tool of (responseJson?.result?.tools || [])) {
         console.log('Registering tool:', tool.name);
         console.log(tool);
         
