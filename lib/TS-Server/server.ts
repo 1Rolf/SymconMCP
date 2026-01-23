@@ -3,10 +3,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express from 'express';
 import { z } from 'zod';
 
-// Parse command line arguments for Symcon base URL
+// Parse command line arguments for Symcon base URL and MCP Server port
 const args = process.argv.slice(2);
 const symconUrlArg = args.find(arg => arg.startsWith('--symcon-url='));
 const symconUrlFromArgs = symconUrlArg ? symconUrlArg.split('=')[1] : null;
+const portArg = args.find(arg => arg.startsWith('--port='));
+const portFromArgs = portArg ? parseInt(portArg.split('=')[1]) : null;
 
 // Configure Symcon base URL (priority: command line > environment variable > default)
 const symconBaseURL = symconUrlFromArgs || 'http://127.0.0.1:3777';
@@ -14,6 +16,10 @@ const symconHookURL = `${symconBaseURL}/hook/mcp/`;
 
 console.log('Starting TS MCP Server');
 console.log('Symcon Hook URL:', symconHookURL);
+
+// Configure MCP Server port (priority: command line > environment variable > default)
+const mcpPort = portFromArgs || parseInt(process.env.PORT || '3000');
+console.log('MCP Server will start on port:', mcpPort);
 
 // Create an MCP server
 const server = new McpServer({
@@ -199,7 +205,8 @@ fetch(symconHookURL, {
         await transport.handleRequest(req, res, req.body);
     });
 
-    const port = parseInt(process.env.PORT || '3000');
+    // Configure MCP Server port (priority: command line > environment variable > default)
+    const port = mcpPort;
     app.listen(port, () => {
         console.log(`Demo MCP Server running on http://localhost:${port}/mcp`);
     }).on('error', error => {
