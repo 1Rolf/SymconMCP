@@ -3,9 +3,17 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express from 'express';
 import { z } from 'zod';
 
-const SYMCON_HOOK_URL = 'http://127.0.0.1:3777/hook/mcp/';
+// Parse command line arguments for Symcon base URL
+const args = process.argv.slice(2);
+const symconUrlArg = args.find(arg => arg.startsWith('--symcon-url='));
+const symconUrlFromArgs = symconUrlArg ? symconUrlArg.split('=')[1] : null;
+
+// Configure Symcon base URL (priority: command line > environment variable > default)
+const symconBaseURL = symconUrlFromArgs || 'http://127.0.0.1:3777';
+const symconHookURL = `${symconBaseURL}/hook/mcp/`;
 
 console.log('Starting TS MCP Server');
+console.log('Symcon Hook URL:', symconHookURL);
 
 // Create an MCP server
 const server = new McpServer({
@@ -67,7 +75,7 @@ const makeSymconRpcRequest = async (method: string, params: any[]) => {
     }
 }
 
-fetch(SYMCON_HOOK_URL, {
+fetch(symconHookURL, {
     method: 'POST',
     headers: {
         'Content-Type': 'application/json'
@@ -108,25 +116,36 @@ fetch(SYMCON_HOOK_URL, {
             }
             
             const zodSchema: any = {};
+            const requiredFields = schema.required || [];
+            
             for (const [key, prop] of Object.entries(schema.properties)) {
                 const propSchema = prop as any;
+                let zodType;
+                
                 if (propSchema.type === 'number') {
-                    zodSchema[key] = z.number();
+                    zodType = z.number();
                 } else if (propSchema.type === 'boolean') {
-                    zodSchema[key] = z.boolean();
+                    zodType = z.boolean();
                 } else if (propSchema.type === 'string') {
-                    zodSchema[key] = z.string();
+                    zodType = z.string();
                 } else if (propSchema.type === 'array') {
                     if (propSchema.items?.type === 'number') {
-                        zodSchema[key] = z.array(z.number());
+                        zodType = z.array(z.number());
                     } else if (propSchema.items?.type === 'string') {
-                        zodSchema[key] = z.array(z.string());
+                        zodType = z.array(z.string());
                     } else {
-                        zodSchema[key] = z.array(z.any());
+                        zodType = z.array(z.any());
                     }
                 } else {
-                    zodSchema[key] = z.any();
+                    zodType = z.any();
                 }
+                
+                // Make the field optional if it's not in the required array
+                if (!requiredFields.includes(key)) {
+                    zodType = zodType.optional();
+                }
+                
+                zodSchema[key] = zodType;
             }
             return zodSchema;
         };
@@ -140,7 +159,7 @@ fetch(SYMCON_HOOK_URL, {
                 outputSchema: convertJsonSchemaToZod(tool.outputSchema)
             },
             async (args) => {
-                const result = await fetch(SYMCON_HOOK_URL, {
+                const result = await fetch(symconHookURL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -153,6 +172,7 @@ fetch(SYMCON_HOOK_URL, {
                     })
                 })
                 const responseText = await result.text();
+                console.log(`Response body for tools/call ${tool.name} (text):`, responseText);
                 return JSON.parse(responseText).result;
             }
         );
