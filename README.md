@@ -117,11 +117,9 @@ Im Browser http://localhost:3080/ öffnen
 
 #### Konto erstellen
 
-// TODO: Bild
+![Konto erstellen](imgs/1-konto-erstellen.png)
 
 Kontodaten eingeben und bestätigen. Die Daten bleiben nur bei der lokalen LibreChat Installation. Die E-Mail-Adresse muss nicht verifiziert werden.
-
-![Konto erstellen](imgs/1-konto-erstellen.png)
 
 #### Einloggen
 
@@ -173,7 +171,9 @@ Danach auf "Erstellen" klicken
 Unter "MCP Server" bei der Chateingabe den Haken bei symcon aktivieren.
 
 #### Loslegen
+
 Der Symcon MCP Server ist nun einsatzbereit und kann verwendet werden.
+
 ---
 
 ## Verwendbare MCP-Funktionen
