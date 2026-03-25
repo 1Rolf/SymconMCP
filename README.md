@@ -98,7 +98,7 @@ Zusätzlich die librechat.example.yaml kopieren und librechat.yaml nennen. In de
 ```
 mcpSettings:
   allowedDomains:
-    - 'host.docker.internal'
+    - 'http://host.docker.internal:3000'
 ```
 
 Und zum Abschluß die librechat.yaml aktivieren, indem die docker-compose.override.yml.example kopiert und in docker-compose.override.yml umbenannt wird. In dieser Datei folgenden Abschnitt hinzufügen (oder die # davor entfernen):
