@@ -94,11 +94,12 @@ Alternativ kann unter https://github.com/danny-avila/LibreChat unter Code -> Dow
 
 Der offiziellen Anleitung folgen, z.B. [hier](https://www.librechat.ai/docs/local/docker)
 
-Zusätzlich die librechat.example.yaml kopieren und librechat.yaml nennen. In der Datei folgenden Abschnitt hinzufügen (oder die # davor entfernen):
+Zusätzlich die librechat.example.yaml kopieren und librechat.yaml nennen. In der Datei folgenden Abschnitt hinzufügen:
 ```
-mcpSettings:
-  allowedDomains:
-    - 'host.docker.internal'
+mcpServers:
+  symcon:
+    type: sse
+    url: http://host.docker.internal:3000/mcp
 ```
 
 Und zum Abschluß die librechat.yaml aktivieren, indem die docker-compose.override.yml.example kopiert und in docker-compose.override.yml umbenannt wird. In dieser Datei folgenden Abschnitt hinzufügen (oder die # davor entfernen):
