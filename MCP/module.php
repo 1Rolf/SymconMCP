@@ -61,13 +61,40 @@ class MCP extends IPSModuleStrict
      */
     protected function ProcessHookData(): void
     {
+        // Streamable-HTTP conformance:
+        // Only POST carries JSON-RPC messages. Clients may additionally open a
+        // GET (server-initiated SSE stream, which we don't offer) or send a
+        // DELETE (session termination; we are stateless). Per spec both MUST be
+        // answered with 405 - NOT with a JSON body. Answering GET with a
+        // JSON-RPC *response* body breaks strict clients (Zod validation).
+        if (($_SERVER['REQUEST_METHOD'] ?? 'POST') !== 'POST') {
+            http_response_code(405);
+            header('Allow: POST');
+            return;
+        }
+
         $request = json_decode(file_get_contents('php://input'), true);
-        $result = [];
 
         $this->SendDebug('MCP Input', json_encode($request), 0);
-        $this->SendDebug('MCP Method', strval($request['method'] ?? ''), 0);
 
-        switch ($request['method'] ?? '') {
+        if (!is_array($request)) {
+            http_response_code(400);
+            return;
+        }
+
+        // Notifications (no "id") must be accepted with 202 and NO body -
+        // returning a JSON-RPC response to a notification is a spec violation
+        // that strict clients reject.
+        if (!array_key_exists('id', $request)) {
+            http_response_code(202);
+            return;
+        }
+
+        $result = [];
+        $method = strval($request['method'] ?? '');
+        $this->SendDebug('MCP Method', $method, 0);
+
+        switch ($method) {
             case 'tools/list':
                 $result = [
                     'tools' => $this->BuildToolList()
@@ -104,12 +131,24 @@ class MCP extends IPSModuleStrict
                 ];
                 break;
 
-            case 'notifications/initialized':
-                http_response_code(202);
-                return;
+            case 'ping':
+                // Spec: ping expects an empty object result.
+                $result = new stdClass();
+                break;
 
             default:
-                break;
+                // Unknown request: proper JSON-RPC error instead of a bogus
+                // empty result (which strict clients reject).
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'jsonrpc' => '2.0',
+                    'id' => $request['id'],
+                    'error' => [
+                        'code' => -32601,
+                        'message' => 'Method not found: ' . $method
+                    ]
+                ]);
+                return;
         }
 
         header('Content-Type: application/json');
@@ -119,7 +158,7 @@ class MCP extends IPSModuleStrict
         echo json_encode([
             'result' => $result,
             'jsonrpc' => '2.0',
-            'id' => $request['id'] ?? null
+            'id' => $request['id']
         ]);
     }
 
