@@ -1,0 +1,37 @@
+{
+    "elements": [
+        {
+            "type": "Select",
+            "name": "WriteMode",
+            "caption": "Write mode",
+            "options": [
+                { "caption": "OFF — read-only, write tools hidden and rejected", "value": 0 },
+                { "caption": "ADVISORY — write calls are audited, never executed", "value": 1 },
+                { "caption": "ACTIVE — write calls executed if policy allows", "value": 2 }
+            ]
+        },
+        {
+            "type": "SelectMedia",
+            "name": "MetadataMediaID",
+            "caption": "Metadata registry (JSON media document)"
+        },
+        {
+            "type": "SelectMedia",
+            "name": "AuditMediaID",
+            "caption": "Audit log (JSONL media document, optional)"
+        },
+        {
+            "type": "ValidationTextBox",
+            "name": "DenyModuleGUIDs",
+            "caption": "Hard deny: module GUIDs (JSON array, e.g. [\"{GUID-1}\", \"{GUID-2}\"])",
+            "multiline": true
+        }
+    ],
+    "actions": [
+        {
+            "type": "Label",
+            "caption": "Recommended rollout: OFF → ADVISORY (collect audited proposals) → ACTIVE. A variable is writable only with an explicit human grant in the metadata registry: reviewed=true, safety=false, llm_write=\"allowed\"."
+        }
+    ],
+    "status": []
+}

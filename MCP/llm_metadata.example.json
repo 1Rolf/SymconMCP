@@ -1,0 +1,53 @@
+{
+    "$schema_version": 1,
+    "$comment": "Zentrale Metadaten-Registry. Schlüssel = Symcon-ObjektID (als String). Schreibfreigabe erfordert ALLE drei Felder explizit: reviewed=true UND safety=false UND llm_write='allowed'. Fehlt eines (oder der ganze Eintrag), gilt deny-by-default.",
+    "objects": {
+        "12345": {
+            "name_hint": "Steckdose Stehlampe Wohnzimmer",
+            "type": "plug",
+            "room": "Wohnzimmer",
+            "unit": null,
+            "cadence_expected_s": null,
+            "safety": false,
+            "llm_write": "allowed",
+            "reviewed": true,
+            "reviewed_by": "human",
+            "note": "Reversibel, unkritisch — freigegeben."
+        },
+        "23456": {
+            "name_hint": "Steckdose Heizstab Bad",
+            "type": "plug",
+            "room": "Bad",
+            "unit": null,
+            "cadence_expected_s": null,
+            "safety": true,
+            "llm_write": "none",
+            "reviewed": true,
+            "reviewed_by": "human",
+            "note": "Sieht aus wie eine gewoehnliche Steckdose, schaltet aber einen Heizstab — sicherheitskritisch trotz harmloser Geraeteklasse. Genau der Fall, den eine GUID-Deny-List NICHT erkennen kann."
+        },
+        "34567": {
+            "name_hint": "Temperatur Klimageraet Buero",
+            "type": "temperature_sensor",
+            "room": "Buero",
+            "unit": "°C",
+            "cadence_expected_s": 300,
+            "pair_actuator_id": 34570,
+            "safety": false,
+            "llm_write": "none",
+            "reviewed": true,
+            "reviewed_by": "human",
+            "note": "Sensor, kein Schreibziel. llm_write=none, aber Metadaten dienen Kontext/Anomalie-Ebene (Referenzfall Klima-Haenger)."
+        },
+        "45678": {
+            "name_hint": "Neu erkanntes Geraet, noch ungeprueft",
+            "type": "unknown",
+            "room": null,
+            "safety": true,
+            "llm_write": "none",
+            "reviewed": false,
+            "reviewed_by": null,
+            "note": "Vom LLM generierter Vorschlag, noch nicht human-reviewed → in jedem Fall nicht schaltbar."
+        }
+    }
+}
