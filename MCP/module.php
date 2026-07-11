@@ -86,7 +86,6 @@ class MCP extends IPSModuleStrict
                             'text' => json_encode($content)
                         ]
                     ],
-                    'structuredContent' => $content,
                 ];
                 break;
 
@@ -138,14 +137,12 @@ class MCP extends IPSModuleStrict
                 'title' => 'Get Object Info',
                 'description' => 'Get the object info for the Symcon object with the given object ID. The output matches that of IPS_GetObject.',
                 'inputSchema' => $this->Schema(['objectID' => ['type' => 'number']], ['objectID']),
-                'outputSchema' => $this->Schema(['info' => ['type' => 'object']], ['info'])
             ],
             [
                 'name' => 'get-name',
                 'title' => 'Get Object Name',
                 'description' => 'Get the name of the Symcon object with the given object ID.',
                 'inputSchema' => $this->Schema(['objectID' => ['type' => 'number']], ['objectID']),
-                'outputSchema' => $this->Schema(['name' => ['type' => 'string']], ['name'])
             ],
             [
                 'name' => 'find-objects',
@@ -176,26 +173,6 @@ DESC,
                         'additionalProperties' => false
                     ]
                 ], []),
-                'outputSchema' => $this->Schema([
-                    'objects' => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'ObjectID' => ['type' => 'number'],
-                                'ObjectType' => ['type' => 'number'],
-                                'ObjectName' => ['type' => 'string'],
-                                'ObjectInfo' => ['type' => 'string'],
-                                'ParentID' => ['type' => 'number'],
-                                'ObjectPosition' => ['type' => 'number'],
-                                'ObjectIsHidden' => ['type' => 'boolean'],
-                                'ObjectIsReadOnly' => ['type' => 'boolean'],
-                            ],
-                            'required' => ['ObjectID', 'ObjectType', 'ObjectName', 'ObjectInfo', 'ParentID', 'ObjectPosition', 'ObjectIsHidden', 'ObjectIsReadOnly'],
-                            'additionalProperties' => true,
-                        ]
-                    ]
-                ], ['objects'])
             ],
             [
                 'name' => 'get-children',
@@ -204,9 +181,6 @@ DESC,
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.']
                 ], ['objectID']),
-                'outputSchema' => $this->Schema([
-                    'children' => ['type' => 'array', 'items' => ['type' => 'object']]
-                ], ['children'])
             ],
             [
                 'name' => 'get-value',
@@ -216,19 +190,12 @@ DESC,
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the Symcon variable. This is a required integer identifier. Must be a valid objectID from the system.'],
                     'raw' => ['type' => 'boolean', 'description' => 'If true, the raw value is returned, otherwise the formatted value, including annotations like units or date/time formatting based on the variable presentation.']
                 ], ['objectID']),
-                'outputSchema' => $this->Schema([
-                    'value' => ['type' => 'any', 'description' => 'The current value of the Symcon variable.']
-                ], [])
             ],
             [
                 'name' => 'current-time',
                 'title' => 'Get Current Time',
                 'description' => 'Returns the current Unix timestamp in seconds since January 1, 1970 UTC.',
                 'inputSchema' => $this->Schema([], []),
-                'outputSchema' => $this->Schema([
-                    'timestamp' => ['type' => 'number', 'description' => 'Current Unix timestamp in seconds'],
-                    'formatted' => ['type' => 'string', 'description' => 'Human-readable date and time in ISO 8601 format']
-                ], ['timestamp', 'formatted'])
             ],
             [
                 'name' => 'get-logged-data',
@@ -246,21 +213,6 @@ DESC,
                     'to' => ['type' => 'number', 'description' => 'End Unix timestamp in seconds'],
                     'limit' => ['type' => 'number', 'description' => 'Maximum number of records to return (default 1000, max 10000)']
                 ], ['variableID']),
-                'outputSchema' => $this->Schema([
-                    'data' => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'TimeStamp' => ['type' => 'number', 'description' => 'Unix timestamp when the value was logged'],
-                                'Value' => ['type' => 'any', 'description' => 'The logged value (can be string, number, boolean)'],
-                                'Duration' => ['type' => 'number', 'description' => 'The duration for which the value was logged (in seconds)'],
-                                'FormattedTime' => ['type' => 'string', 'description' => 'Human-readable timestamp in ISO 8601 format']
-                            ],
-                            'required' => ['TimeStamp', 'Value', 'Duration', 'FormattedTime']
-                        ]
-                    ]
-                ], ['data'])
             ],
             [
                 'name' => 'get-aggregated-data',
@@ -279,23 +231,6 @@ DESC,
                     'to' => ['type' => 'number', 'description' => 'End Unix timestamp in seconds'],
                     'limit' => ['type' => 'number', 'description' => 'Maximum number of buckets to return (default 1000, max 10000)']
                 ], ['variableID', 'level']),
-                'outputSchema' => $this->Schema([
-                    'data' => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'TimeStamp' => ['type' => 'number', 'description' => 'Unix timestamp of the bucket start'],
-                                'Duration' => ['type' => 'number', 'description' => 'Bucket duration in seconds'],
-                                'Min' => ['type' => 'any'],
-                                'Max' => ['type' => 'any'],
-                                'Avg' => ['type' => 'any'],
-                                'FormattedTime' => ['type' => 'string', 'description' => 'Human-readable bucket start in ISO 8601 format']
-                            ],
-                            'required' => ['TimeStamp', 'Duration', 'FormattedTime']
-                        ]
-                    ]
-                ], ['data'])
             ],
             [
                 'name' => 'get-status-log',
@@ -314,23 +249,6 @@ DESC,
                 'inputSchema' => $this->Schema([
                     'types' => ['type' => 'array', 'items' => ['type' => 'number'], 'description' => 'Array of message types to filter by']
                 ], []),
-                'outputSchema' => $this->Schema([
-                    'data' => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'TimeStamp' => ['type' => 'number', 'description' => 'Unix timestamp when the value was logged'],
-                                'SenderID' => ['type' => 'number', 'description' => 'The ID of the sender of the message'],
-                                'Sender' => ['type' => 'string', 'description' => 'The name of the sender of the message'],
-                                'Message' => ['type' => 'string', 'description' => 'The log message content'],
-                                'FormattedTime' => ['type' => 'string', 'description' => 'Human-readable timestamp in ISO 8601 format'],
-                                'Type' => ['type' => 'number', 'description' => 'The type of the message'],
-                            ],
-                            'required' => ['TimeStamp', 'SenderID', 'Sender', 'FormattedTime']
-                        ]
-                    ]
-                ], ['data'])
             ],
             [
                 'name' => 'get-write-policy',
@@ -339,11 +257,6 @@ DESC,
                 'inputSchema' => $this->Schema([
                     'variableID' => ['type' => 'number', 'description' => 'The numeric ID of the Symcon variable to check']
                 ], ['variableID']),
-                'outputSchema' => $this->Schema([
-                    'mode' => ['type' => 'string', 'description' => 'Current write mode: OFF, ADVISORY or ACTIVE'],
-                    'allowed' => ['type' => 'boolean', 'description' => 'Whether the policy would allow switching this variable'],
-                    'reason' => ['type' => 'string', 'description' => 'Explanation of the policy decision']
-                ], ['mode', 'allowed', 'reason'])
             ]
         ];
 
@@ -361,12 +274,6 @@ DESC,
                     'value' => ['type' => 'boolean'],
                     'reason' => ['type' => 'string', 'description' => 'Why this switch is requested. Mandatory; written to the audit log.']
                 ], ['variableID', 'value', 'reason']),
-                'outputSchema' => $this->Schema([
-                    'success' => ['type' => 'boolean'],
-                    'advisory' => ['type' => 'boolean', 'description' => 'True if the call was recorded in advisory mode instead of being executed'],
-                    'message' => ['type' => 'string'],
-                    'error' => ['type' => 'string']
-                ], ['success'])
             ];
         }
 
