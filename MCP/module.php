@@ -102,18 +102,34 @@ class MCP extends IPSModuleStrict
                 break;
 
             case 'tools/call':
-                $content = $this->HandleToolCall(
-                    strval($request['params']['name'] ?? ''),
-                    $request['params']['arguments'] ?? []
-                );
-                $result = [
-                    'content' => [
-                        [
-                            'type' => 'text',
-                            'text' => json_encode($content)
-                        ]
-                    ],
-                ];
+                try {
+                    $content = $this->HandleToolCall(
+                        strval($request['params']['name'] ?? ''),
+                        $request['params']['arguments'] ?? []
+                    );
+                    $result = [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => json_encode($content, JSON_INVALID_UTF8_SUBSTITUTE)
+                            ]
+                        ],
+                    ];
+                } catch (Throwable $e) {
+                    // Tool failures become an MCP error result (isError) instead
+                    // of an uncaught exception producing an HTML 500 page, which
+                    // would break the transport for strict clients. The LLM sees
+                    // the message and can correct its input.
+                    $result = [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => 'Tool error: ' . $e->getMessage()
+                            ]
+                        ],
+                        'isError' => true,
+                    ];
+                }
                 break;
 
             case 'initialize':
@@ -328,6 +344,36 @@ DESC,
                 ], []),
             ],
             [
+                'name' => 'find-in-registry',
+                'title' => 'Find Devices in the Semantic Registry',
+                'description' => <<<DESC
+Query the human-curated semantic registry of this home. This is the
+AUTHORITATIVE source for which room a device belongs to and what type it is —
+for room-based questions ("temperature in the living room") prefer this tool
+over find-objects and tree traversal.
+
+Filters (combined with AND, all optional, case-insensitive partial match):
+- room: room/area name (e.g. "Wohnzimmer")
+- type: device type (e.g. "temperature_sensor", "plug")
+- name: matches the entry's name_hint
+
+Each hit contains the ObjectID (use it directly with get-value /
+get-logged-data / get-aggregated-data), name_hint, type, room and whether the
+entry is human-reviewed.
+
+Note: the registry may not cover every device yet. An empty result means "not
+catalogued", not necessarily "does not exist" — fall back to ONE find-objects
+call in that case. If both are empty, the device does not exist: say so
+honestly instead of exploring the tree.
+DESC,
+                'inputSchema' => $this->Schema([
+                    'room' => ['type' => 'string', 'description' => 'Filter by room/area name (partial match)'],
+                    'type' => ['type' => 'string', 'description' => 'Filter by device type (partial match)'],
+                    'name' => ['type' => 'string', 'description' => 'Filter by name_hint (partial match)'],
+                    'limit' => ['type' => 'number', 'description' => 'Maximum number of results (default 50)']
+                ], []),
+            ],
+            [
                 'name' => 'get-write-policy',
                 'title' => 'Get Write Policy for a Variable',
                 'description' => 'Check whether the given variable could be switched by the LLM under the current write mode and metadata policy. Read-only: performs no action. Use this before attempting switch-boolean to avoid futile calls.',
@@ -448,6 +494,9 @@ DESC,
 
             case 'get-status-log':
                 return $this->GetStatusLog($args);
+
+            case 'find-in-registry':
+                return $this->FindInRegistry($args);
 
             case 'get-write-policy':
                 $mode = $this->ReadPropertyInteger('WriteMode');
@@ -751,6 +800,60 @@ DESC,
     private function GetArchiveID(): int
     {
         return IPS_GetInstanceListByModuleID(self::ARCHIVE_GUID)[0];
+    }
+
+    /**
+     * Search the semantic registry (central JSON media document).
+     * The registry is the authoritative source for room/type semantics.
+     */
+    private function FindInRegistry(array $args): array
+    {
+        $limit = max(1, min(intval($args['limit'] ?? 50), 200));
+        $fRoom = strtolower(trim(strval($args['room'] ?? '')));
+        $fType = strtolower(trim(strval($args['type'] ?? '')));
+        $fName = strtolower(trim(strval($args['name'] ?? '')));
+
+        $meta = $this->LoadMetadata();
+        $result = [];
+        $totalMatches = 0;
+
+        foreach ($meta as $objectID => $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $room = strtolower(strval($entry['room'] ?? ''));
+            $type = strtolower(strval($entry['type'] ?? ''));
+            $name = strtolower(strval($entry['name_hint'] ?? ''));
+
+            if ($fRoom !== '' && !str_contains($room, $fRoom)) {
+                continue;
+            }
+            if ($fType !== '' && !str_contains($type, $fType)) {
+                continue;
+            }
+            if ($fName !== '' && !str_contains($name, $fName)) {
+                continue;
+            }
+
+            $totalMatches++;
+            if (count($result) < $limit) {
+                $result[] = [
+                    'ObjectID' => intval($objectID),
+                    'name_hint' => $entry['name_hint'] ?? '',
+                    'type' => $entry['type'] ?? '',
+                    'room' => $entry['room'] ?? null,
+                    'reviewed' => ($entry['reviewed'] ?? false) === true,
+                    'note' => $entry['note'] ?? ''
+                ];
+            }
+        }
+
+        return [
+            'entries' => $result,
+            'totalMatches' => $totalMatches,
+            'truncated' => $totalMatches > count($result),
+            'registrySize' => count($meta)
+        ];
     }
 
     private function ClampLimit($limit): int
