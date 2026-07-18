@@ -20,11 +20,9 @@ declare(strict_types=1);
  *  - Removed: rename-object (config write), get-snapshot (context bomb).
  *  - Added: get-aggregated-data (AC_GetAggregatedValues), limit parameter on
  *    get-logged-data, get-write-policy (read-only policy introspection).
- *  - Capability facts (v1.2.0): every find-objects / get-children hit carries
- *    ObjectTypeName, and for variables VarType + Archived (links are resolved
- *    to their target). New find-objects filter "archived". Rationale: tool
- *    choice (get-value vs. get-logged-data vs. get-children) requires knowing
- *    what an object IS — without these facts the LLM can only probe and fail.
+ *  - Added (1.2.0): read-only automation introspection — find-automations,
+ *    get-automation (full typed detail incl. script/plan source),
+ *    find-references-to-object (events exact; scripts/instances best-effort).
  */
 class MCP extends IPSModuleStrict
 {
@@ -34,25 +32,6 @@ class MCP extends IPSModuleStrict
 
     private const ARCHIVE_GUID = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
     private const UTIL_GUID = '{B69010EA-96D5-46DF-B885-24821B8C8DBD}';
-
-    // Human-readable names for IPS object types (index = ObjectType) and
-    // variable types (index = VariableType). Numeric enums are weak signals
-    // for an LLM; names make the object kind unambiguous in every hit.
-    private const TYPE_NAMES = [
-        0 => 'category',
-        1 => 'instance',
-        2 => 'variable',
-        3 => 'script',
-        4 => 'event',
-        5 => 'media',
-        6 => 'link'
-    ];
-    private const VARTYPE_NAMES = [
-        0 => 'bool',
-        1 => 'int',
-        2 => 'float',
-        3 => 'string'
-    ];
 
     public function Create(): void
     {
@@ -235,30 +214,14 @@ Filters (combined with AND):
 - types: array of object types (0: category, 1: instance, 2: variable, 3: script, 4: event, 5: media, 6: link)
 - name: case-insensitive partial match on the object name
 - usage: "temperature" lists all temperature objects
-- archived: true = only variables with history logging enabled (usable with
-  get-logged-data / get-aggregated-data); false = only variables without
-  logging. Setting this filter implies variables only. For history questions,
-  set archived=true so unusable candidates never appear.
 - lastUpdate: object with optional "from"/"to" Unix timestamps filtering by last update (scripts: last execution)
 - limit: max results to return (default 50)
 
-Each hit is compact: ObjectID, ObjectName, ObjectType, ObjectTypeName, ParentID
-and LocationPath (the names of its ancestors, root first, e.g.
+Each hit is compact: ObjectID, ObjectName, ObjectType, ParentID and
+LocationPath (the names of its ancestors, root first, e.g.
 "Haus / EG / Wohnzimmer") — use LocationPath to determine which room an object
-belongs to instead of traversing the tree. Variables additionally carry
-VarType (bool/int/float/string) and Archived (whether history logging is
-enabled). Links are resolved server-side: TargetID and TargetTypeName, plus
-VarType/Archived if the target is a variable — use the TargetID with the
-value/history tools. For full details on a specific hit, call get-object with
-its ObjectID.
-
-Choose the next tool from these facts instead of probing:
-- get-value: only for variables (or link targets that are variables)
-- get-logged-data / get-aggregated-data: only if Archived is true
-- Archived=false means NO history exists — report the current value via
-  get-value and say so honestly instead of retrying.
-- categories/instances: inspect with get-children; scripts/events/media have
-  no value at all.
+belongs to instead of traversing the tree. For full details on a specific hit,
+call get-object with its ObjectID.
 
 The response contains totalMatches and truncated. If truncated is true, refine
 the filters (e.g. a more specific name) instead of paging through the tree.
@@ -271,7 +234,6 @@ DESC,
                     'types' => ['type' => 'array', 'items' => ['type' => 'number']],
                     'name' => ['type' => 'string'],
                     'usage' => ['type' => 'string'],
-                    'archived' => ['type' => 'boolean', 'description' => 'true: only variables with history logging enabled; false: only variables without logging. Implies variables only. Use archived=true for history questions.'],
                     'lastUpdate' => [
                         'type' => 'object',
                         'properties' => [
@@ -287,7 +249,7 @@ DESC,
             [
                 'name' => 'get-children',
                 'title' => 'Get Children',
-                'description' => 'Get the object info for all children of the Symcon object with the given object ID. Use this to inspect ONE known object, not to search: for finding objects anywhere in the tree, use find-objects instead (it searches globally in a single call). Each child carries ObjectTypeName, and for variables VarType and Archived (links are resolved to TargetID/TargetTypeName) — pick the follow-up tool from these facts: get-value only for variables, history tools only if Archived is true. Required: You must provide a valid numeric objectID.',
+                'description' => 'Get the object info for all children of the Symcon object with the given object ID. Use this to inspect ONE known object, not to search: for finding objects anywhere in the tree, use find-objects instead (it searches globally in a single call). Required: You must provide a valid numeric objectID.',
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.']
                 ], ['objectID']),
@@ -295,7 +257,7 @@ DESC,
             [
                 'name' => 'get-value',
                 'title' => 'Get Value',
-                'description' => 'Get the current value of the Symcon variable with the given object ID. Only variables have a value (ObjectTypeName "variable" in find-objects/get-children hits): calling this on categories, instances, scripts, events or media fails — inspect those with get-children instead. For links, call this with the resolved TargetID. Required: You must provide a valid numeric objectID. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
+                'description' => 'Get the current value of the Symcon variable with the given object ID. Required: You must provide a valid numeric objectID. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the Symcon variable. This is a required integer identifier. Must be a valid objectID from the system.'],
                     'raw' => ['type' => 'boolean', 'description' => 'If true, the raw value is returned, otherwise the formatted value, including annotations like units or date/time formatting based on the variable presentation.']
@@ -314,11 +276,6 @@ DESC,
 Get historical raw logged data for a Symcon variable within a time range.
 Returns logged values newest first, capped by "limit" (default 1000, max 10000).
 For long ranges prefer get-aggregated-data; use this only for narrow windows.
-
-PRECONDITION: only works for variables whose history logging is enabled —
-check the Archived flag in find-objects/get-children hits, or search directly
-with find-objects archived=true. If Archived is false, NO history exists:
-report the current value via get-value and say so honestly instead of retrying.
 
 TIME RANGE — do NOT compute Unix timestamps yourself. Two ways:
 1. Preferred for relative ranges: set "period" to one of today, yesterday,
@@ -348,11 +305,6 @@ Get aggregated historical data (min/max/avg per bucket) for a logged Symcon vari
 Preferred for long ranges (weeks/months). Aggregation levels: 0 = hourly, 1 = daily,
 2 = weekly, 3 = monthly, 4 = yearly. Returns buckets newest first, capped by "limit"
 (default 1000).
-
-PRECONDITION: only works for variables whose history logging is enabled —
-check the Archived flag in find-objects/get-children hits, or search directly
-with find-objects archived=true. If Archived is false, NO history exists:
-report the current value via get-value and say so honestly instead of retrying.
 
 TIME RANGE — do NOT compute Unix timestamps yourself. Two ways:
 1. Preferred for relative ranges: set "period" to one of today, yesterday,
@@ -431,6 +383,92 @@ DESC,
                 'inputSchema' => $this->Schema([
                     'variableID' => ['type' => 'number', 'description' => 'The numeric ID of the Symcon variable to check']
                 ], ['variableID']),
+            ],
+            [
+                'name' => 'find-automations',
+                'title' => 'Find Automations (Events, Scripts, Plans)',
+                'description' => <<<DESC
+Search ALL automations of this Symcon installation in a single call: events
+(triggered, cyclic, weekly schedule) as well as PHP scripts, flow plans
+(Ablaufplan) and logic plans (Logikplan). This search is global and complete:
+an empty result means no matching automation exists anywhere — do NOT verify
+by walking the tree.
+
+Filters (combined with AND, all optional):
+- kinds: array of automation kinds:
+    event.trigger   = event fired by a variable (on update/change/limit/value)
+    event.cyclic    = time-cyclic event (timer)
+    event.schedule  = weekly schedule event (Wochenplan)
+    script.php      = PHP script
+    script.flow     = flow plan (Ablaufplan)
+    script.workflow = logic plan (Logikplan)
+- name: case-insensitive partial match on the automation name
+- active: true/false — matches only events with that active state
+  (scripts/plans have no active flag and are NOT filtered by this)
+- limit: max results to return (default 50)
+
+Each hit is compact: ObjectID, Name, Kind, Active (null for scripts/plans),
+ParentID, LocationPath. For full details call get-automation with the
+ObjectID. For the question "which automations touch object X?" use
+find-references-to-object instead.
+DESC,
+                'inputSchema' => $this->Schema([
+                    'kinds' => ['type' => 'array', 'items' => ['type' => 'string', 'enum' => ['event.trigger', 'event.cyclic', 'event.schedule', 'script.php', 'script.flow', 'script.workflow']], 'description' => 'Automation kinds to include; omit for all'],
+                    'name' => ['type' => 'string', 'description' => 'Case-insensitive partial match on the name'],
+                    'active' => ['type' => 'boolean', 'description' => 'Filter events by active state; scripts/plans are unaffected'],
+                    'limit' => ['type' => 'number', 'description' => 'Maximum number of results (default 50)']
+                ], []),
+            ],
+            [
+                'name' => 'get-automation',
+                'title' => 'Get Automation Details',
+                'description' => <<<DESC
+Get the full, typed description of ONE automation (event, PHP script, flow
+plan or logic plan) by its object ID. Read-only: nothing is changed, enabled
+or disabled.
+
+For events everything is resolved server-side: trigger type and trigger
+variable (with name and LocationPath), conditions (variable/time/date rules
+in readable form), the cyclic schedule as text, weekly schedule groups with
+weekday names, and LastRun/NextRun as ISO 8601 — never compute timestamps
+yourself. The raw event definition is included under "Raw".
+
+For scripts and plans the response contains the FULL source/definition
+("Content"; for flow and logic plans this is a JSON structure), the objects
+it references (resolved with name and LocationPath), events attached to it,
+and LastExecuted/LastUpdated as ISO 8601. Very large content is hard-capped
+(ContentTruncated=true if cut).
+DESC,
+                'inputSchema' => $this->Schema([
+                    'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the event, script or plan']
+                ], ['objectID']),
+            ],
+            [
+                'name' => 'find-references-to-object',
+                'title' => 'Find Automations Referencing an Object',
+                'description' => <<<DESC
+Answer "which automations touch object X?" for a given object ID. Scans three
+sources in one call and reports per source how complete the scan is:
+
+- events (completeness "exact"): every event is checked structurally — as
+  trigger, in conditions, attached to the object, or referenced anywhere in
+  its definition. An empty events result IS proof that no event uses the
+  object.
+- scripts (completeness "best-effort"): all PHP scripts, flow plans and logic
+  plans are searched for the literal numeric object ID. IDs computed at
+  runtime (e.g. via IPS_GetObjectIDByName or variables) cannot be detected —
+  an empty result here does NOT prove absence.
+- instances (completeness "best-effort"): all instance configurations are
+  searched for the literal numeric object ID (finds e.g. a watchdog watching
+  the object). Same limitation as scripts.
+
+Each match is compact (ObjectID, Name, Kind or ModuleName, LocationPath,
+roles or match count). Use get-automation on a match for details.
+DESC,
+                'inputSchema' => $this->Schema([
+                    'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the object to find references to'],
+                    'limit' => ['type' => 'number', 'description' => 'Maximum matches per source (default 100)']
+                ], ['objectID']),
             ]
         ];
 
@@ -475,14 +513,9 @@ DESC,
                 return $this->FindObjects($args);
 
             case 'get-children':
-                $archiveID = $this->GetArchiveIDSafe();
                 $result = [];
                 foreach (IPS_GetChildrenIDs(intval($args['objectID'])) as $childID) {
-                    $info = IPS_GetObject($childID);
-                    $result[] = array_merge(
-                        $info,
-                        $this->DescribeCapabilities($childID, intval($info['ObjectType']), $archiveID)
-                    );
+                    $result[] = IPS_GetObject($childID);
                 }
                 return [
                     'children' => $result
@@ -562,6 +595,15 @@ DESC,
                     'allowed' => $policy['allowed'],
                     'reason' => $policy['reason']
                 ];
+
+            case 'find-automations':
+                return $this->FindAutomations($args);
+
+            case 'get-automation':
+                return $this->GetAutomation($args);
+
+            case 'find-references-to-object':
+                return $this->FindReferencesToObject($args);
 
             case 'switch-boolean':
                 return $this->SwitchBoolean($args);
@@ -728,7 +770,6 @@ DESC,
         $types = $args['types'] ?? [0, 1, 2, 3, 4, 5, 6];
         $usage = strval($args['usage'] ?? '');
         $limit = max(1, min(intval($args['limit'] ?? 50), 200));
-        $archiveID = $this->GetArchiveIDSafe();
         $totalMatches = 0;
         $result = [];
 
@@ -738,20 +779,6 @@ DESC,
             }
             if (!in_array($object['type'], $types)) {
                 continue;
-            }
-
-            // "archived" filter: restrict to variables whose logging status
-            // matches. Non-variables cannot satisfy it and are skipped, so a
-            // history-question search never yields unusable candidates.
-            if (array_key_exists('archived', $args)) {
-                if ($object['type'] != 2) {
-                    continue;
-                }
-                $variableID = intval(substr($index, 2));
-                $isArchived = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $variableID);
-                if ($isArchived !== boolval($args['archived'])) {
-                    continue;
-                }
             }
 
             switch ($usage) {
@@ -812,16 +839,13 @@ DESC,
             $objectID = intval(substr($index, 2));
             $totalMatches++;
             if (count($result) < $limit) {
-                $result[] = array_merge(
-                    [
-                        'ObjectID' => $objectID,
-                        'ObjectName' => $object['name'],
-                        'ObjectType' => $object['type'],
-                        'ParentID' => IPS_GetParent($objectID),
-                        'LocationPath' => $this->GetLocationPath($objectID)
-                    ],
-                    $this->DescribeCapabilities($objectID, intval($object['type']), $archiveID)
-                );
+                $result[] = [
+                    'ObjectID' => $objectID,
+                    'ObjectName' => $object['name'],
+                    'ObjectType' => $object['type'],
+                    'ParentID' => IPS_GetParent($objectID),
+                    'LocationPath' => $this->GetLocationPath($objectID)
+                ];
             }
         }
         return [
@@ -877,58 +901,6 @@ DESC,
     }
 
     /**
-     * Archive Control instance ID, or 0 if none exists. Used by the hit
-     * enrichment, which must never throw just because archiving is absent.
-     */
-    private function GetArchiveIDSafe(): int
-    {
-        $list = IPS_GetInstanceListByModuleID(self::ARCHIVE_GUID);
-        return count($list) > 0 ? intval($list[0]) : 0;
-    }
-
-    /**
-     * Capability facts for one object, appended to every find-objects /
-     * get-children hit so the LLM can choose the follow-up tool from facts
-     * instead of probing (design principle: make error classes impossible):
-     *  - ObjectTypeName: human-readable object kind (numeric enums are weak
-     *    signals for an LLM)
-     *  - variables: VarType (bool/int/float/string) + Archived (whether
-     *    history logging is enabled — precondition for get-logged-data /
-     *    get-aggregated-data)
-     *  - links: resolved server-side to TargetID/TargetTypeName (plus
-     *    VarType/Archived if the target is a variable), so a link is never
-     *    a dead end of the same error class.
-     */
-    private function DescribeCapabilities(int $objectID, int $objectType, int $archiveID): array
-    {
-        $out = [
-            'ObjectTypeName' => self::TYPE_NAMES[$objectType] ?? 'unknown'
-        ];
-
-        if ($objectType === 2 /* variable */) {
-            $var = IPS_GetVariable($objectID);
-            $out['VarType'] = self::VARTYPE_NAMES[$var['VariableType']] ?? 'unknown';
-            $out['Archived'] = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $objectID);
-        } elseif ($objectType === 6 /* link */) {
-            $targetID = intval(IPS_GetLink($objectID)['TargetID']);
-            $out['TargetID'] = $targetID;
-            if (IPS_ObjectExists($targetID)) {
-                $targetType = intval(IPS_GetObject($targetID)['ObjectType']);
-                $out['TargetTypeName'] = self::TYPE_NAMES[$targetType] ?? 'unknown';
-                if ($targetType === 2) {
-                    $var = IPS_GetVariable($targetID);
-                    $out['VarType'] = self::VARTYPE_NAMES[$var['VariableType']] ?? 'unknown';
-                    $out['Archived'] = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $targetID);
-                }
-            } else {
-                $out['TargetTypeName'] = 'missing';
-            }
-        }
-
-        return $out;
-    }
-
-    /**
      * Search the semantic registry (central JSON media document).
      * The registry is the authoritative source for room/type semantics.
      */
@@ -979,6 +951,586 @@ DESC,
             'totalMatches' => $totalMatches,
             'truncated' => $totalMatches > count($result),
             'registrySize' => count($meta)
+        ];
+    }
+
+    // =========================================================================
+    // Automation introspection (read-only)
+    // =========================================================================
+
+    private function AutomationKindOfEvent(array $event): string
+    {
+        switch (intval($event['EventType'] ?? -1)) {
+            case 0:
+                return 'event.trigger';
+            case 1:
+                return 'event.cyclic';
+            case 2:
+                return 'event.schedule';
+            default:
+                return 'event.unknown';
+        }
+    }
+
+    private function AutomationKindOfScript(array $script): string
+    {
+        switch (intval($script['ScriptType'] ?? -1)) {
+            case 0:
+                return 'script.php';
+            case 1:
+                return 'script.flow'; // Ablaufplan
+            case 2:
+                return 'script.workflow'; // Logikplan
+            default:
+                return 'script.unknown';
+        }
+    }
+
+    /**
+     * Compact reference to any object: ID, name, type, LocationPath.
+     */
+    private function DescribeObjectRef(int $objectID): array
+    {
+        $object = IPS_GetObject($objectID);
+        return [
+            'ObjectID' => $objectID,
+            'Name' => $object['ObjectName'],
+            'ObjectType' => $object['ObjectType'],
+            'LocationPath' => $this->GetLocationPath($objectID)
+        ];
+    }
+
+    /**
+     * Global, complete, capped search over all automations:
+     * events (all three types) and scripts (PHP / flow plan / logic plan).
+     */
+    private function FindAutomations(array $args): array
+    {
+        $limit = max(1, min(intval($args['limit'] ?? 50), 200));
+        $fName = strtolower(trim(strval($args['name'] ?? '')));
+        $kinds = is_array($args['kinds'] ?? null) ? $args['kinds'] : [];
+        $activeFilter = array_key_exists('active', $args) ? boolval($args['active']) : null;
+
+        $candidates = [];
+        foreach (IPS_GetEventList() as $eventID) {
+            $event = IPS_GetEvent($eventID);
+            $candidates[] = [
+                'ObjectID' => $eventID,
+                'Kind' => $this->AutomationKindOfEvent($event),
+                'Active' => boolval($event['EventActive'] ?? false)
+            ];
+        }
+        foreach (IPS_GetScriptList() as $scriptID) {
+            $script = IPS_GetScript($scriptID);
+            $candidates[] = [
+                'ObjectID' => $scriptID,
+                'Kind' => $this->AutomationKindOfScript($script),
+                'Active' => null // scripts/plans have no active flag
+            ];
+        }
+
+        $result = [];
+        $totalMatches = 0;
+        foreach ($candidates as $candidate) {
+            $name = IPS_GetName($candidate['ObjectID']);
+            if ($fName !== '' && !str_contains(strtolower($name), $fName)) {
+                continue;
+            }
+            if (count($kinds) > 0 && !in_array($candidate['Kind'], $kinds, true)) {
+                continue;
+            }
+            if ($activeFilter !== null && $candidate['Active'] !== null && $candidate['Active'] !== $activeFilter) {
+                continue;
+            }
+            $totalMatches++;
+            if (count($result) < $limit) {
+                $result[] = [
+                    'ObjectID' => $candidate['ObjectID'],
+                    'Name' => $name,
+                    'Kind' => $candidate['Kind'],
+                    'Active' => $candidate['Active'],
+                    'ParentID' => IPS_GetParent($candidate['ObjectID']),
+                    'LocationPath' => $this->GetLocationPath($candidate['ObjectID'])
+                ];
+            }
+        }
+
+        return [
+            'automations' => $result,
+            'totalMatches' => $totalMatches,
+            'truncated' => $totalMatches > count($result)
+        ];
+    }
+
+    /**
+     * Typed detail of one automation (event or script/plan).
+     */
+    private function GetAutomation(array $args): array
+    {
+        $objectID = intval($args['objectID'] ?? 0);
+        if (!IPS_ObjectExists($objectID)) {
+            throw new Exception('Object ' . $objectID . ' does not exist.');
+        }
+        $type = IPS_GetObject($objectID)['ObjectType'];
+        if ($type === 4) {
+            return $this->DescribeEvent($objectID);
+        }
+        if ($type === 3) {
+            return $this->DescribeScript($objectID);
+        }
+        throw new Exception('Object ' . $objectID . ' is neither an event nor a script/plan (ObjectType ' . $type . '). Use find-automations to locate automations.');
+    }
+
+    private function DescribeEvent(int $eventID): array
+    {
+        $event = IPS_GetEvent($eventID);
+        $kind = $this->AutomationKindOfEvent($event);
+        $parentID = IPS_GetParent($eventID);
+
+        $out = [
+            'ObjectID' => $eventID,
+            'Name' => IPS_GetName($eventID),
+            'Kind' => $kind,
+            'Active' => boolval($event['EventActive'] ?? false),
+            'LocationPath' => $this->GetLocationPath($eventID),
+            // The event's parent is what it is attached to (its default target).
+            'AttachedTo' => ($parentID > 0) ? $this->DescribeObjectRef($parentID) : null,
+            'LastRun' => (intval($event['LastRun'] ?? 0) > 0) ? date('c', intval($event['LastRun'])) : null,
+            'NextRun' => (intval($event['NextRun'] ?? 0) > 0) ? date('c', intval($event['NextRun'])) : null
+        ];
+
+        switch ($kind) {
+            case 'event.trigger':
+                $triggerVariableID = intval($event['TriggerVariableID'] ?? 0);
+                $out['Trigger'] = [
+                    'Type' => $this->TriggerTypeName(intval($event['TriggerType'] ?? -1)),
+                    'Variable' => ($triggerVariableID > 0 && IPS_ObjectExists($triggerVariableID))
+                        ? $this->DescribeObjectRef($triggerVariableID)
+                        : null,
+                    'Value' => $event['TriggerValue'] ?? null
+                ];
+                break;
+
+            case 'event.cyclic':
+                $out['Cyclic'] = [
+                    'Text' => $this->CyclicText($event),
+                    'Note' => 'Text is best-effort; NextRun/LastRun above are authoritative.'
+                ];
+                break;
+
+            case 'event.schedule':
+                $out['WeeklySchedule'] = $this->DescribeSchedule($event);
+                break;
+        }
+
+        if (!empty($event['EventConditions'])) {
+            $out['Conditions'] = $this->DescribeConditions($event['EventConditions']);
+        }
+
+        // Complete raw definition — nothing is hidden. Prefer the resolved
+        // fields above; never compute timestamps from raw values yourself.
+        $out['Raw'] = $event;
+
+        return $out;
+    }
+
+    private function TriggerTypeName(int $type): string
+    {
+        switch ($type) {
+            case 0:
+                return 'on-variable-update';
+            case 1:
+                return 'on-variable-change';
+            case 2:
+                return 'on-limit-exceed';
+            case 3:
+                return 'on-limit-drop';
+            case 4:
+                return 'on-specific-value';
+            default:
+                return 'unknown (' . $type . ')';
+        }
+    }
+
+    private function CyclicText(array $event): string
+    {
+        $dateType = intval($event['CyclicDateType'] ?? -1);
+        $dateValue = intval($event['CyclicDateValue'] ?? 0);
+        $timeType = intval($event['CyclicTimeType'] ?? -1);
+        $timeValue = intval($event['CyclicTimeValue'] ?? 0);
+
+        switch ($dateType) {
+            case 0:
+                $date = 'no date rule';
+                break;
+            case 1:
+                $date = 'once';
+                break;
+            case 2:
+                $date = ($dateValue > 1) ? ('every ' . $dateValue . ' days') : 'daily';
+                break;
+            case 3:
+                $date = (($dateValue > 1) ? ('every ' . $dateValue . ' weeks') : 'weekly')
+                    . ' on ' . $this->WeekdayMaskText(intval($event['CyclicDateDay'] ?? 0));
+                break;
+            case 4:
+                $date = ($dateValue > 1) ? ('every ' . $dateValue . ' months') : 'monthly';
+                break;
+            case 5:
+                $date = ($dateValue > 1) ? ('every ' . $dateValue . ' years') : 'yearly';
+                break;
+            default:
+                $date = 'date rule type ' . $dateType;
+        }
+
+        switch ($timeType) {
+            case 0:
+                $time = 'at a fixed time';
+                break;
+            case 1:
+                $time = 'every ' . $timeValue . ' second(s)';
+                break;
+            case 2:
+                $time = 'every ' . $timeValue . ' minute(s)';
+                break;
+            case 3:
+                $time = 'every ' . $timeValue . ' hour(s)';
+                break;
+            default:
+                $time = 'time rule type ' . $timeType;
+        }
+
+        return $date . ', ' . $time;
+    }
+
+    private function WeekdayMaskText(int $mask): string
+    {
+        $names = [1 => 'Mon', 2 => 'Tue', 4 => 'Wed', 8 => 'Thu', 16 => 'Fri', 32 => 'Sat', 64 => 'Sun'];
+        $out = [];
+        foreach ($names as $bit => $name) {
+            if (($mask & $bit) !== 0) {
+                $out[] = $name;
+            }
+        }
+        return (count($out) > 0) ? implode(', ', $out) : '(none)';
+    }
+
+    private function DescribeSchedule(array $event): array
+    {
+        $actions = [];
+        foreach (($event['ScheduleActions'] ?? []) as $action) {
+            $actions[intval($action['ID'] ?? -1)] = strval($action['Name'] ?? '');
+        }
+
+        $groups = [];
+        foreach (($event['ScheduleGroups'] ?? []) as $group) {
+            $points = [];
+            foreach (($group['Points'] ?? []) as $point) {
+                $start = $point['Start'] ?? [];
+                $actionID = intval($point['ActionID'] ?? -1);
+                $points[] = [
+                    'Time' => sprintf('%02d:%02d:%02d', intval($start['Hour'] ?? 0), intval($start['Minute'] ?? 0), intval($start['Second'] ?? 0)),
+                    'Action' => (($actions[$actionID] ?? '') !== '') ? $actions[$actionID] : ('action #' . $actionID)
+                ];
+            }
+            $groups[] = [
+                'Days' => $this->WeekdayMaskText(intval($group['Days'] ?? 0)),
+                'Points' => $points
+            ];
+        }
+
+        return [
+            'Actions' => array_values($actions),
+            'Groups' => $groups
+        ];
+    }
+
+    private function DescribeConditions(array $conditions): array
+    {
+        $out = [];
+        foreach ($conditions as $condition) {
+            if (!is_array($condition)) {
+                continue;
+            }
+            $rules = [];
+            foreach (($condition['VariableRules'] ?? []) as $rule) {
+                $variableID = intval($rule['VariableID'] ?? 0);
+                $rules[] = [
+                    'Kind' => 'variable',
+                    'Variable' => ($variableID > 0 && IPS_ObjectExists($variableID))
+                        ? $this->DescribeObjectRef($variableID)
+                        : ['ObjectID' => $variableID],
+                    'Comparison' => $this->ComparisonSymbol(intval($rule['Comparison'] ?? -1)),
+                    'Value' => $rule['Value'] ?? null
+                ];
+            }
+            foreach (($condition['TimeRules'] ?? []) as $rule) {
+                $value = $rule['Value'] ?? [];
+                $rules[] = [
+                    'Kind' => 'time',
+                    'Comparison' => $this->ComparisonSymbol(intval($rule['Comparison'] ?? -1)),
+                    'Value' => sprintf('%02d:%02d:%02d', intval($value['Hour'] ?? 0), intval($value['Minute'] ?? 0), intval($value['Second'] ?? 0))
+                ];
+            }
+            foreach (($condition['DateRules'] ?? []) as $rule) {
+                $value = $rule['Value'] ?? [];
+                $rules[] = [
+                    'Kind' => 'date',
+                    'Comparison' => $this->ComparisonSymbol(intval($rule['Comparison'] ?? -1)),
+                    'Value' => sprintf('%04d-%02d-%02d', intval($value['Year'] ?? 0), intval($value['Month'] ?? 0), intval($value['Day'] ?? 0))
+                ];
+            }
+            foreach (($condition['DayOfTheWeekRules'] ?? []) as $rule) {
+                $rules[] = [
+                    'Kind' => 'day-of-week',
+                    'Comparison' => $this->ComparisonSymbol(intval($rule['Comparison'] ?? -1)),
+                    'ValueRaw' => $rule['Value'] ?? null,
+                    'Note' => 'weekday index as stored by Symcon'
+                ];
+            }
+            $out[] = [
+                'Operation' => $this->ConditionOperationText(intval($condition['Operation'] ?? -1)),
+                'Rules' => $rules
+            ];
+        }
+        return $out;
+    }
+
+    private function ComparisonSymbol(int $comparison): string
+    {
+        switch ($comparison) {
+            case 0:
+                return '=';
+            case 1:
+                return '!=';
+            case 2:
+                return '>';
+            case 3:
+                return '>=';
+            case 4:
+                return '<';
+            case 5:
+                return '<=';
+            default:
+                return 'comparison ' . $comparison;
+        }
+    }
+
+    private function ConditionOperationText(int $operation): string
+    {
+        switch ($operation) {
+            case 0:
+                return 'AND (all rules must match)';
+            case 1:
+                return 'OR (any rule may match)';
+            case 2:
+                return 'NAND';
+            case 3:
+                return 'NOR';
+            default:
+                return 'operation ' . $operation;
+        }
+    }
+
+    private function DescribeScript(int $scriptID): array
+    {
+        $script = IPS_GetScript($scriptID);
+        $content = IPS_GetScriptContent($scriptID);
+
+        // Hard cap to protect the client context window (content beyond this
+        // size cannot be reasoned about in one piece anyway).
+        $cap = 100000;
+
+        $out = [
+            'ObjectID' => $scriptID,
+            'Name' => IPS_GetName($scriptID),
+            'Kind' => $this->AutomationKindOfScript($script),
+            'ParentID' => IPS_GetParent($scriptID),
+            'LocationPath' => $this->GetLocationPath($scriptID),
+            'IsBroken' => boolval($script['ScriptIsBroken'] ?? false),
+            'LastExecuted' => (intval($script['ScriptExecuted'] ?? 0) > 0) ? date('c', intval($script['ScriptExecuted'])) : null,
+            'LastUpdated' => (intval($script['ScriptUpdated'] ?? 0) > 0) ? date('c', intval($script['ScriptUpdated'])) : null,
+            'ContentSize' => strlen($content),
+            // Objects this script/plan references (numeric ID tokens found in
+            // the content, validated against the object tree; best-effort).
+            'ReferencedObjects' => $this->ExtractObjectRefs($content)
+        ];
+
+        // Events attached to this script/plan (they run it).
+        $attached = [];
+        foreach (IPS_GetChildrenIDs($scriptID) as $childID) {
+            if (IPS_GetObject($childID)['ObjectType'] !== 4) {
+                continue;
+            }
+            $childEvent = IPS_GetEvent($childID);
+            $attached[] = [
+                'ObjectID' => $childID,
+                'Name' => IPS_GetName($childID),
+                'Kind' => $this->AutomationKindOfEvent($childEvent),
+                'Active' => boolval($childEvent['EventActive'] ?? false)
+            ];
+        }
+        $out['AttachedEvents'] = $attached;
+
+        // Full source/definition. PHP scripts: PHP source. Flow plans
+        // (Ablaufplan) and logic plans (Logikplan): their JSON definition.
+        $out['ContentTruncated'] = strlen($content) > $cap;
+        $out['Content'] = substr($content, 0, $cap);
+
+        return $out;
+    }
+
+    /**
+     * Best-effort extraction of referenced objects from script/plan content:
+     * five-digit tokens that exist as objects in the tree.
+     */
+    private function ExtractObjectRefs(string $content): array
+    {
+        if (preg_match_all('/\b\d{5}\b/', $content, $matches) === false) {
+            return [];
+        }
+        $ids = array_values(array_unique(array_map('intval', $matches[0])));
+        $refs = [];
+        foreach ($ids as $id) {
+            if (!IPS_ObjectExists($id)) {
+                continue;
+            }
+            $refs[] = $this->DescribeObjectRef($id);
+            if (count($refs) >= 100) {
+                break;
+            }
+        }
+        return $refs;
+    }
+
+    /**
+     * "Which automations touch object X?" over three sources with explicit
+     * per-source completeness semantics (see tool description).
+     */
+    private function FindReferencesToObject(array $args): array
+    {
+        $objectID = intval($args['objectID'] ?? 0);
+        if (!IPS_ObjectExists($objectID)) {
+            throw new Exception('Object ' . $objectID . ' does not exist.');
+        }
+        $limit = max(1, min(intval($args['limit'] ?? 100), 500));
+        $needle = '/\b' . $objectID . '\b/';
+
+        // --- Events: structural check over every event => exact ---
+        $eventMatches = [];
+        $eventTotal = 0;
+        foreach (IPS_GetEventList() as $eventID) {
+            if ($eventID === $objectID) {
+                continue;
+            }
+            $event = IPS_GetEvent($eventID);
+            $roles = [];
+            if (intval($event['TriggerVariableID'] ?? 0) === $objectID) {
+                $roles[] = 'trigger';
+            }
+            foreach (($event['EventConditions'] ?? []) as $condition) {
+                foreach (($condition['VariableRules'] ?? []) as $rule) {
+                    if (intval($rule['VariableID'] ?? 0) === $objectID) {
+                        $roles[] = 'condition';
+                        break 2;
+                    }
+                }
+            }
+            if (IPS_GetParent($eventID) === $objectID) {
+                $roles[] = 'attached-to-object';
+            }
+            if (count($roles) === 0 && preg_match($needle, json_encode($event) ?: '') === 1) {
+                // e.g. the ID appears in action parameters of the definition
+                $roles[] = 'referenced-in-definition';
+            }
+            if (count($roles) === 0) {
+                continue;
+            }
+            $eventTotal++;
+            if (count($eventMatches) < $limit) {
+                $eventMatches[] = [
+                    'ObjectID' => $eventID,
+                    'Name' => IPS_GetName($eventID),
+                    'Kind' => $this->AutomationKindOfEvent($event),
+                    'Active' => boolval($event['EventActive'] ?? false),
+                    'LocationPath' => $this->GetLocationPath($eventID),
+                    'Roles' => $roles
+                ];
+            }
+        }
+
+        // --- Scripts/plans: literal ID token in content => best-effort ---
+        $scriptMatches = [];
+        $scriptTotal = 0;
+        foreach (IPS_GetScriptList() as $scriptID) {
+            if ($scriptID === $objectID) {
+                continue;
+            }
+            $count = preg_match_all($needle, IPS_GetScriptContent($scriptID));
+            if ($count === false || $count === 0) {
+                continue;
+            }
+            $scriptTotal++;
+            if (count($scriptMatches) < $limit) {
+                $script = IPS_GetScript($scriptID);
+                $scriptMatches[] = [
+                    'ObjectID' => $scriptID,
+                    'Name' => IPS_GetName($scriptID),
+                    'Kind' => $this->AutomationKindOfScript($script),
+                    'LocationPath' => $this->GetLocationPath($scriptID),
+                    'MatchCount' => $count
+                ];
+            }
+        }
+
+        // --- Instances: literal ID token in configuration => best-effort ---
+        $instanceMatches = [];
+        $instanceTotal = 0;
+        foreach (IPS_GetInstanceList() as $instanceID) {
+            if ($instanceID === $objectID) {
+                continue;
+            }
+            try {
+                $config = IPS_GetConfiguration($instanceID);
+            } catch (Throwable $e) {
+                continue;
+            }
+            if (!is_string($config) || preg_match($needle, $config) !== 1) {
+                continue;
+            }
+            $instanceTotal++;
+            if (count($instanceMatches) < $limit) {
+                $instance = IPS_GetInstance($instanceID);
+                $instanceMatches[] = [
+                    'ObjectID' => $instanceID,
+                    'Name' => IPS_GetName($instanceID),
+                    'ModuleName' => strval($instance['ModuleInfo']['ModuleName'] ?? ''),
+                    'LocationPath' => $this->GetLocationPath($instanceID)
+                ];
+            }
+        }
+
+        return [
+            'object' => $this->DescribeObjectRef($objectID),
+            'events' => [
+                'completeness' => 'exact',
+                'matches' => $eventMatches,
+                'totalMatches' => $eventTotal,
+                'truncated' => $eventTotal > count($eventMatches)
+            ],
+            'scripts' => [
+                'completeness' => 'best-effort',
+                'matches' => $scriptMatches,
+                'totalMatches' => $scriptTotal,
+                'truncated' => $scriptTotal > count($scriptMatches)
+            ],
+            'instances' => [
+                'completeness' => 'best-effort',
+                'matches' => $instanceMatches,
+                'totalMatches' => $instanceTotal,
+                'truncated' => $instanceTotal > count($instanceMatches)
+            ],
+            'note' => 'events is exhaustive over stored event definitions. scripts/instances match the literal numeric ID; IDs computed at runtime cannot be detected — an empty result there does not prove absence.'
         ];
     }
 
