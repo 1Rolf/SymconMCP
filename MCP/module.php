@@ -20,6 +20,11 @@ declare(strict_types=1);
  *  - Removed: rename-object (config write), get-snapshot (context bomb).
  *  - Added: get-aggregated-data (AC_GetAggregatedValues), limit parameter on
  *    get-logged-data, get-write-policy (read-only policy introspection).
+ *  - Capability facts (v1.2.0): every find-objects / get-children hit carries
+ *    ObjectTypeName, and for variables VarType + Archived (links are resolved
+ *    to their target). New find-objects filter "archived". Rationale: tool
+ *    choice (get-value vs. get-logged-data vs. get-children) requires knowing
+ *    what an object IS — without these facts the LLM can only probe and fail.
  */
 class MCP extends IPSModuleStrict
 {
@@ -29,6 +34,25 @@ class MCP extends IPSModuleStrict
 
     private const ARCHIVE_GUID = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
     private const UTIL_GUID = '{B69010EA-96D5-46DF-B885-24821B8C8DBD}';
+
+    // Human-readable names for IPS object types (index = ObjectType) and
+    // variable types (index = VariableType). Numeric enums are weak signals
+    // for an LLM; names make the object kind unambiguous in every hit.
+    private const TYPE_NAMES = [
+        0 => 'category',
+        1 => 'instance',
+        2 => 'variable',
+        3 => 'script',
+        4 => 'event',
+        5 => 'media',
+        6 => 'link'
+    ];
+    private const VARTYPE_NAMES = [
+        0 => 'bool',
+        1 => 'int',
+        2 => 'float',
+        3 => 'string'
+    ];
 
     public function Create(): void
     {
@@ -142,7 +166,7 @@ class MCP extends IPSModuleStrict
                     ],
                     'serverInfo' => [
                         'name' => 'symcon-mcp-guarded',
-                        'version' => '1.1.0'
+                        'version' => '1.2.0'
                     ]
                 ];
                 break;
@@ -211,14 +235,30 @@ Filters (combined with AND):
 - types: array of object types (0: category, 1: instance, 2: variable, 3: script, 4: event, 5: media, 6: link)
 - name: case-insensitive partial match on the object name
 - usage: "temperature" lists all temperature objects
+- archived: true = only variables with history logging enabled (usable with
+  get-logged-data / get-aggregated-data); false = only variables without
+  logging. Setting this filter implies variables only. For history questions,
+  set archived=true so unusable candidates never appear.
 - lastUpdate: object with optional "from"/"to" Unix timestamps filtering by last update (scripts: last execution)
 - limit: max results to return (default 50)
 
-Each hit is compact: ObjectID, ObjectName, ObjectType, ParentID and
-LocationPath (the names of its ancestors, root first, e.g.
+Each hit is compact: ObjectID, ObjectName, ObjectType, ObjectTypeName, ParentID
+and LocationPath (the names of its ancestors, root first, e.g.
 "Haus / EG / Wohnzimmer") — use LocationPath to determine which room an object
-belongs to instead of traversing the tree. For full details on a specific hit,
-call get-object with its ObjectID.
+belongs to instead of traversing the tree. Variables additionally carry
+VarType (bool/int/float/string) and Archived (whether history logging is
+enabled). Links are resolved server-side: TargetID and TargetTypeName, plus
+VarType/Archived if the target is a variable — use the TargetID with the
+value/history tools. For full details on a specific hit, call get-object with
+its ObjectID.
+
+Choose the next tool from these facts instead of probing:
+- get-value: only for variables (or link targets that are variables)
+- get-logged-data / get-aggregated-data: only if Archived is true
+- Archived=false means NO history exists — report the current value via
+  get-value and say so honestly instead of retrying.
+- categories/instances: inspect with get-children; scripts/events/media have
+  no value at all.
 
 The response contains totalMatches and truncated. If truncated is true, refine
 the filters (e.g. a more specific name) instead of paging through the tree.
@@ -231,6 +271,7 @@ DESC,
                     'types' => ['type' => 'array', 'items' => ['type' => 'number']],
                     'name' => ['type' => 'string'],
                     'usage' => ['type' => 'string'],
+                    'archived' => ['type' => 'boolean', 'description' => 'true: only variables with history logging enabled; false: only variables without logging. Implies variables only. Use archived=true for history questions.'],
                     'lastUpdate' => [
                         'type' => 'object',
                         'properties' => [
@@ -246,7 +287,7 @@ DESC,
             [
                 'name' => 'get-children',
                 'title' => 'Get Children',
-                'description' => 'Get the object info for all children of the Symcon object with the given object ID. Use this to inspect ONE known object, not to search: for finding objects anywhere in the tree, use find-objects instead (it searches globally in a single call). Required: You must provide a valid numeric objectID.',
+                'description' => 'Get the object info for all children of the Symcon object with the given object ID. Use this to inspect ONE known object, not to search: for finding objects anywhere in the tree, use find-objects instead (it searches globally in a single call). Each child carries ObjectTypeName, and for variables VarType and Archived (links are resolved to TargetID/TargetTypeName) — pick the follow-up tool from these facts: get-value only for variables, history tools only if Archived is true. Required: You must provide a valid numeric objectID.',
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.']
                 ], ['objectID']),
@@ -254,7 +295,7 @@ DESC,
             [
                 'name' => 'get-value',
                 'title' => 'Get Value',
-                'description' => 'Get the current value of the Symcon variable with the given object ID. Required: You must provide a valid numeric objectID. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
+                'description' => 'Get the current value of the Symcon variable with the given object ID. Only variables have a value (ObjectTypeName "variable" in find-objects/get-children hits): calling this on categories, instances, scripts, events or media fails — inspect those with get-children instead. For links, call this with the resolved TargetID. Required: You must provide a valid numeric objectID. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the Symcon variable. This is a required integer identifier. Must be a valid objectID from the system.'],
                     'raw' => ['type' => 'boolean', 'description' => 'If true, the raw value is returned, otherwise the formatted value, including annotations like units or date/time formatting based on the variable presentation.']
@@ -273,6 +314,11 @@ DESC,
 Get historical raw logged data for a Symcon variable within a time range.
 Returns logged values newest first, capped by "limit" (default 1000, max 10000).
 For long ranges prefer get-aggregated-data; use this only for narrow windows.
+
+PRECONDITION: only works for variables whose history logging is enabled —
+check the Archived flag in find-objects/get-children hits, or search directly
+with find-objects archived=true. If Archived is false, NO history exists:
+report the current value via get-value and say so honestly instead of retrying.
 
 TIME RANGE — do NOT compute Unix timestamps yourself. Two ways:
 1. Preferred for relative ranges: set "period" to one of today, yesterday,
@@ -302,6 +348,11 @@ Get aggregated historical data (min/max/avg per bucket) for a logged Symcon vari
 Preferred for long ranges (weeks/months). Aggregation levels: 0 = hourly, 1 = daily,
 2 = weekly, 3 = monthly, 4 = yearly. Returns buckets newest first, capped by "limit"
 (default 1000).
+
+PRECONDITION: only works for variables whose history logging is enabled —
+check the Archived flag in find-objects/get-children hits, or search directly
+with find-objects archived=true. If Archived is false, NO history exists:
+report the current value via get-value and say so honestly instead of retrying.
 
 TIME RANGE — do NOT compute Unix timestamps yourself. Two ways:
 1. Preferred for relative ranges: set "period" to one of today, yesterday,
@@ -424,9 +475,14 @@ DESC,
                 return $this->FindObjects($args);
 
             case 'get-children':
+                $archiveID = $this->GetArchiveIDSafe();
                 $result = [];
                 foreach (IPS_GetChildrenIDs(intval($args['objectID'])) as $childID) {
-                    $result[] = IPS_GetObject($childID);
+                    $info = IPS_GetObject($childID);
+                    $result[] = array_merge(
+                        $info,
+                        $this->DescribeCapabilities($childID, intval($info['ObjectType']), $archiveID)
+                    );
                 }
                 return [
                     'children' => $result
@@ -672,6 +728,7 @@ DESC,
         $types = $args['types'] ?? [0, 1, 2, 3, 4, 5, 6];
         $usage = strval($args['usage'] ?? '');
         $limit = max(1, min(intval($args['limit'] ?? 50), 200));
+        $archiveID = $this->GetArchiveIDSafe();
         $totalMatches = 0;
         $result = [];
 
@@ -681,6 +738,20 @@ DESC,
             }
             if (!in_array($object['type'], $types)) {
                 continue;
+            }
+
+            // "archived" filter: restrict to variables whose logging status
+            // matches. Non-variables cannot satisfy it and are skipped, so a
+            // history-question search never yields unusable candidates.
+            if (array_key_exists('archived', $args)) {
+                if ($object['type'] != 2) {
+                    continue;
+                }
+                $variableID = intval(substr($index, 2));
+                $isArchived = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $variableID);
+                if ($isArchived !== boolval($args['archived'])) {
+                    continue;
+                }
             }
 
             switch ($usage) {
@@ -741,13 +812,16 @@ DESC,
             $objectID = intval(substr($index, 2));
             $totalMatches++;
             if (count($result) < $limit) {
-                $result[] = [
-                    'ObjectID' => $objectID,
-                    'ObjectName' => $object['name'],
-                    'ObjectType' => $object['type'],
-                    'ParentID' => IPS_GetParent($objectID),
-                    'LocationPath' => $this->GetLocationPath($objectID)
-                ];
+                $result[] = array_merge(
+                    [
+                        'ObjectID' => $objectID,
+                        'ObjectName' => $object['name'],
+                        'ObjectType' => $object['type'],
+                        'ParentID' => IPS_GetParent($objectID),
+                        'LocationPath' => $this->GetLocationPath($objectID)
+                    ],
+                    $this->DescribeCapabilities($objectID, intval($object['type']), $archiveID)
+                );
             }
         }
         return [
@@ -800,6 +874,58 @@ DESC,
     private function GetArchiveID(): int
     {
         return IPS_GetInstanceListByModuleID(self::ARCHIVE_GUID)[0];
+    }
+
+    /**
+     * Archive Control instance ID, or 0 if none exists. Used by the hit
+     * enrichment, which must never throw just because archiving is absent.
+     */
+    private function GetArchiveIDSafe(): int
+    {
+        $list = IPS_GetInstanceListByModuleID(self::ARCHIVE_GUID);
+        return count($list) > 0 ? intval($list[0]) : 0;
+    }
+
+    /**
+     * Capability facts for one object, appended to every find-objects /
+     * get-children hit so the LLM can choose the follow-up tool from facts
+     * instead of probing (design principle: make error classes impossible):
+     *  - ObjectTypeName: human-readable object kind (numeric enums are weak
+     *    signals for an LLM)
+     *  - variables: VarType (bool/int/float/string) + Archived (whether
+     *    history logging is enabled — precondition for get-logged-data /
+     *    get-aggregated-data)
+     *  - links: resolved server-side to TargetID/TargetTypeName (plus
+     *    VarType/Archived if the target is a variable), so a link is never
+     *    a dead end of the same error class.
+     */
+    private function DescribeCapabilities(int $objectID, int $objectType, int $archiveID): array
+    {
+        $out = [
+            'ObjectTypeName' => self::TYPE_NAMES[$objectType] ?? 'unknown'
+        ];
+
+        if ($objectType === 2 /* variable */) {
+            $var = IPS_GetVariable($objectID);
+            $out['VarType'] = self::VARTYPE_NAMES[$var['VariableType']] ?? 'unknown';
+            $out['Archived'] = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $objectID);
+        } elseif ($objectType === 6 /* link */) {
+            $targetID = intval(IPS_GetLink($objectID)['TargetID']);
+            $out['TargetID'] = $targetID;
+            if (IPS_ObjectExists($targetID)) {
+                $targetType = intval(IPS_GetObject($targetID)['ObjectType']);
+                $out['TargetTypeName'] = self::TYPE_NAMES[$targetType] ?? 'unknown';
+                if ($targetType === 2) {
+                    $var = IPS_GetVariable($targetID);
+                    $out['VarType'] = self::VARTYPE_NAMES[$var['VariableType']] ?? 'unknown';
+                    $out['Archived'] = ($archiveID > 0) && AC_GetLoggingStatus($archiveID, $targetID);
+                }
+            } else {
+                $out['TargetTypeName'] = 'missing';
+            }
+        }
+
+        return $out;
     }
 
     /**
