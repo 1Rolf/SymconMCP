@@ -23,12 +23,35 @@ declare(strict_types=1);
  *  - Added (1.2.0): read-only automation introspection — find-automations,
  *    get-automation (full typed detail incl. script/plan source),
  *    find-references-to-object (events exact; scripts/instances best-effort).
+ *  - Added (1.3.0): transport hardening against stray PHP output, and central
+ *    object-ID validation.
+ *      (a) The whole request is processed inside an output buffer. Any PHP
+ *          warning/notice emitted by an IPS_* call used to land in the response
+ *          body BEFORE header('Content-Type: application/json') ran, which made
+ *          header() a no-op — the response stayed text/html and strict MCP
+ *          clients rejected an otherwise valid answer. Stray output is now
+ *          captured, logged (KL_WARNING + SendDebug) and discarded; headers and
+ *          body are written only after the buffer has been cleared.
+ *      (b) Symcon object IDs are bounded by 0..60000. Passing anything outside
+ *          that range to IPS_ObjectExists()/IPS_VariableExists() emits a warning
+ *          instead of returning false. Every ID that originates from the LLM or
+ *          from script content is therefore range-checked first
+ *          (RequireObjectID / IsUsableObjectID). Belegter Anlass: a script
+ *          containing the literal 86400 (seconds per day) broke get-automation.
  */
 class MCP extends IPSModuleStrict
 {
     private const MODE_OFF = 0;
     private const MODE_ADVISORY = 1;
     private const MODE_ACTIVE = 2;
+
+    /**
+     * Upper bound of the Symcon object ID range. Symcon itself reports
+     * "Parameter for ID is not inside of the specified bounds (0..60000)"
+     * as a PHP warning — which is exactly the output we must never produce.
+     */
+    private const OBJECT_ID_MIN = 0;
+    private const OBJECT_ID_MAX = 60000;
 
     private const ARCHIVE_GUID = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
     private const UTIL_GUID = '{B69010EA-96D5-46DF-B885-24821B8C8DBD}';
@@ -61,39 +84,121 @@ class MCP extends IPSModuleStrict
 
     /**
      * This function will be called by the hook control. Visibility should be protected!
+     *
+     * Structure (1.3.0): nothing is echoed while the request is being handled.
+     * The complete processing runs inside an output buffer so that a stray PHP
+     * warning can never precede our headers; status, headers and body are
+     * emitted in one place at the very end.
      */
     protected function ProcessHookData(): void
     {
-        // Streamable-HTTP conformance:
-        // Only POST carries JSON-RPC messages. Clients may additionally open a
-        // GET (server-initiated SSE stream, which we don't offer) or send a
-        // DELETE (session termination; we are stateless). Per spec both MUST be
-        // answered with 405 - NOT with a JSON body. Answering GET with a
-        // JSON-RPC *response* body breaks strict clients (Zod validation).
-        if (($_SERVER['REQUEST_METHOD'] ?? 'POST') !== 'POST') {
-            http_response_code(405);
+        ob_start();
+
+        $status = 200;
+        $payload = null;
+        $sendAllowHeader = false;
+        $requestId = null;
+        $stray = '';
+
+        try {
+            // Streamable-HTTP conformance:
+            // Only POST carries JSON-RPC messages. Clients may additionally open
+            // a GET (server-initiated SSE stream, which we don't offer) or send a
+            // DELETE (session termination; we are stateless). Per spec both MUST
+            // be answered with 405 - NOT with a JSON body. Answering GET with a
+            // JSON-RPC *response* body breaks strict clients (Zod validation).
+            if (($_SERVER['REQUEST_METHOD'] ?? 'POST') !== 'POST') {
+                $status = 405;
+                $sendAllowHeader = true;
+            } else {
+                $request = json_decode(file_get_contents('php://input'), true);
+
+                $this->SendDebug('MCP Input', json_encode($request), 0);
+
+                if (!is_array($request)) {
+                    $status = 400;
+                } elseif (!array_key_exists('id', $request)) {
+                    // Notifications (no "id") must be accepted with 202 and NO
+                    // body - returning a JSON-RPC response to a notification is
+                    // a spec violation that strict clients reject.
+                    $status = 202;
+                } else {
+                    $requestId = $request['id'];
+                    $payload = $this->HandleJsonRpc($request, $requestId);
+                }
+            }
+        } catch (Throwable $e) {
+            // Must not happen (tools/call catches on its own), but under no
+            // circumstances may an HTML error page reach the client.
+            if ($requestId === null) {
+                // No usable request id: an error envelope with "id": null is
+                // itself a known ZodError trigger, so answer without a body.
+                $status = 500;
+                $payload = null;
+            } else {
+                $status = 200;
+                $payload = [
+                    'jsonrpc' => '2.0',
+                    'id' => $requestId,
+                    'error' => [
+                        'code' => -32603,
+                        'message' => 'Internal error: ' . $e->getMessage()
+                    ]
+                ];
+            }
+            $this->LogMessage('MCP: internal error: ' . $e->getMessage(), KL_ERROR);
+        } finally {
+            // Always balance the buffer — an open buffer would be flushed by
+            // PHP at the end of the request and reintroduce the very problem
+            // this construction exists to prevent.
+            $buffered = ob_get_clean();
+            $stray = is_string($buffered) ? $buffered : '';
+        }
+
+        if ($stray !== '') {
+            // Visible, but harmless: the client gets clean JSON, the operator
+            // gets the warning text.
+            $this->SendDebug('MCP Stray Output', $stray, 0);
+            $this->LogMessage(
+                'MCP: stray output suppressed (' . strlen($stray) . ' bytes): ' . substr($stray, 0, 500),
+                KL_WARNING
+            );
+        }
+
+        http_response_code($status);
+        if ($sendAllowHeader) {
             header('Allow: POST');
+        }
+
+        if ($payload === null) {
             return;
         }
 
-        $request = json_decode(file_get_contents('php://input'), true);
+        header('Content-Type: application/json');
 
-        $this->SendDebug('MCP Input', json_encode($request), 0);
-
-        if (!is_array($request)) {
-            http_response_code(400);
-            return;
+        $encoded = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($encoded === false) {
+            $encoded = json_encode([
+                'jsonrpc' => '2.0',
+                'id' => $requestId,
+                'error' => [
+                    'code' => -32603,
+                    'message' => 'Response could not be encoded as JSON: ' . json_last_error_msg()
+                ]
+            ]);
         }
 
-        // Notifications (no "id") must be accepted with 202 and NO body -
-        // returning a JSON-RPC response to a notification is a spec violation
-        // that strict clients reject.
-        if (!array_key_exists('id', $request)) {
-            http_response_code(202);
-            return;
-        }
+        $this->SendDebug('MCP Result', $encoded, 0);
 
-        $result = [];
+        echo $encoded;
+    }
+
+    /**
+     * Dispatch one JSON-RPC request and return the complete response envelope.
+     * Never echoes anything itself.
+     */
+    private function HandleJsonRpc(array $request, $requestId): array
+    {
         $method = strval($request['method'] ?? '');
         $this->SendDebug('MCP Method', $method, 0);
 
@@ -145,7 +250,7 @@ class MCP extends IPSModuleStrict
                     ],
                     'serverInfo' => [
                         'name' => 'symcon-mcp-guarded',
-                        'version' => '1.2.0'
+                        'version' => '1.3.0'
                     ]
                 ];
                 break;
@@ -158,27 +263,21 @@ class MCP extends IPSModuleStrict
             default:
                 // Unknown request: proper JSON-RPC error instead of a bogus
                 // empty result (which strict clients reject).
-                header('Content-Type: application/json');
-                echo json_encode([
+                return [
                     'jsonrpc' => '2.0',
-                    'id' => $request['id'],
+                    'id' => $requestId,
                     'error' => [
                         'code' => -32601,
                         'message' => 'Method not found: ' . $method
                     ]
-                ]);
-                return;
+                ];
         }
 
-        header('Content-Type: application/json');
-
-        $this->SendDebug('MCP Result', json_encode($result), 0);
-
-        echo json_encode([
+        return [
             'result' => $result,
             'jsonrpc' => '2.0',
-            'id' => $request['id']
-        ]);
+            'id' => $requestId
+        ];
     }
 
     // =========================================================================
@@ -408,8 +507,10 @@ Filters (combined with AND, all optional):
 - limit: max results to return (default 50)
 
 Each hit is compact: ObjectID, Name, Kind, Active (null for scripts/plans),
-ParentID, LocationPath. For full details call get-automation with the
-ObjectID. For the question "which automations touch object X?" use
+ParentID, LocationPath. The response contains totalMatches and truncated — if
+truncated is true, raise "limit" or narrow the filters instead of assuming the
+list is complete. For full details call get-automation with the ObjectID. For
+the question "which automations touch object X?" use
 find-references-to-object instead.
 DESC,
                 'inputSchema' => $this->Schema([
@@ -438,6 +539,10 @@ For scripts and plans the response contains the FULL source/definition
 it references (resolved with name and LocationPath), events attached to it,
 and LastExecuted/LastUpdated as ISO 8601. Very large content is hard-capped
 (ContentTruncated=true if cut).
+
+Note on ReferencedObjects: these are numeric tokens found in the content that
+happen to exist as objects — best-effort, so a plain number used as a value
+may appear here by coincidence.
 DESC,
                 'inputSchema' => $this->Schema([
                     'objectID' => ['type' => 'number', 'description' => 'The numeric ID of the event, script or plan']
@@ -501,12 +606,12 @@ DESC,
         switch ($name) {
             case 'get-name':
                 return [
-                    'name' => IPS_GetName(intval($args['objectID']))
+                    'name' => IPS_GetName($this->RequireObjectID($args, 'objectID'))
                 ];
 
             case 'get-object':
                 return [
-                    'info' => IPS_GetObject(intval($args['objectID']))
+                    'info' => IPS_GetObject($this->RequireObjectID($args, 'objectID'))
                 ];
 
             case 'find-objects':
@@ -514,7 +619,7 @@ DESC,
 
             case 'get-children':
                 $result = [];
-                foreach (IPS_GetChildrenIDs(intval($args['objectID'])) as $childID) {
+                foreach (IPS_GetChildrenIDs($this->RequireObjectID($args, 'objectID')) as $childID) {
                     $result[] = IPS_GetObject($childID);
                 }
                 return [
@@ -522,7 +627,7 @@ DESC,
                 ];
 
             case 'get-value':
-                $objectID = intval($args['objectID']);
+                $objectID = $this->RequireObjectID($args, 'objectID');
                 return [
                     'value' => ($args['raw'] ?? false) ? GetValue($objectID) : GetValueFormatted($objectID)
                 ];
@@ -535,11 +640,12 @@ DESC,
                 ];
 
             case 'get-logged-data':
+                $variableID = $this->RequireObjectID($args, 'variableID');
                 $limit = $this->ClampLimit($args['limit'] ?? 1000);
                 [$from, $to] = $this->ResolveTimeRange($args);
                 $loggedData = AC_GetLoggedValues(
                     $this->GetArchiveID(),
-                    intval($args['variableID']),
+                    $variableID,
                     $from,
                     $to,
                     $limit
@@ -555,11 +661,12 @@ DESC,
                 ];
 
             case 'get-aggregated-data':
+                $variableID = $this->RequireObjectID($args, 'variableID');
                 $limit = $this->ClampLimit($args['limit'] ?? 1000);
                 [$from, $to] = $this->ResolveTimeRange($args);
                 $aggregated = AC_GetAggregatedValues(
                     $this->GetArchiveID(),
-                    intval($args['variableID']),
+                    $variableID,
                     intval($args['level']),
                     $from,
                     $to,
@@ -588,8 +695,11 @@ DESC,
                 return $this->FindInRegistry($args);
 
             case 'get-write-policy':
+                // Deliberately NOT RequireObjectID: an out-of-range ID should
+                // produce a regular policy verdict with a reason, not a tool
+                // error. CheckWritePolicy range-checks on its own.
                 $mode = $this->ReadPropertyInteger('WriteMode');
-                $policy = $this->CheckWritePolicy(intval($args['variableID']));
+                $policy = $this->CheckWritePolicy(intval($args['variableID'] ?? 0));
                 return [
                     'mode' => $this->ModeName($mode),
                     'allowed' => $policy['allowed'],
@@ -620,6 +730,9 @@ DESC,
             return ['success' => false, 'error' => 'Write access is disabled (mode OFF).'];
         }
 
+        // Deliberately NOT RequireObjectID: throwing here would bypass the
+        // audit trail. An invalid ID must still be recorded as a denied write
+        // attempt (Leitprinzip 5: every write attempt is auditable).
         $variableID = intval($args['variableID'] ?? 0);
         $value = boolval($args['value'] ?? false);
         $llmReason = trim(strval($args['reason'] ?? ''));
@@ -631,7 +744,7 @@ DESC,
         $this->SendDebug('Switch Variable', json_encode($args), 0);
 
         $policy = $this->CheckWritePolicy($variableID);
-        $exists = IPS_VariableExists($variableID);
+        $exists = $this->IsUsableObjectID($variableID) && IPS_VariableExists($variableID);
         $oldValue = $exists ? GetValue($variableID) : null;
 
         $audit = [
@@ -684,6 +797,17 @@ DESC,
         $deny = function (string $reason): array {
             return ['allowed' => false, 'reason' => $reason];
         };
+
+        // Range check first: IPS_VariableExists() emits a PHP warning for IDs
+        // outside 0..60000 instead of returning false.
+        if ($variableID < self::OBJECT_ID_MIN || $variableID > self::OBJECT_ID_MAX) {
+            return $deny(sprintf(
+                'Invalid variable ID %d (valid range %d..%d).',
+                $variableID,
+                self::OBJECT_ID_MIN,
+                self::OBJECT_ID_MAX
+            ));
+        }
 
         if (!IPS_VariableExists($variableID)) {
             return $deny('Variable does not exist.');
@@ -758,6 +882,53 @@ DESC,
             $content = base64_decode(IPS_GetMediaContent($mediaID));
             IPS_SetMediaContent($mediaID, base64_encode($content . $line . "\n"));
         }
+    }
+
+    // =========================================================================
+    // ID validation
+    // =========================================================================
+
+    /**
+     * Read a mandatory object/variable ID from the tool arguments and validate
+     * its range BEFORE it reaches any IPS_* function.
+     *
+     * Rationale: Symcon accepts object IDs in 0..60000 only. Handing it
+     * anything else (a hallucinated ID, or a plain number harvested from
+     * script content such as 86400) triggers a PHP warning rather than a
+     * return value — and that warning, emitted before header(), turns the
+     * whole HTTP response into text/html.
+     *
+     * Throws, so the caller in tools/call turns it into a readable isError
+     * result the model can act on.
+     */
+    private function RequireObjectID(array $args, string $key): int
+    {
+        if (!array_key_exists($key, $args) || !is_numeric($args[$key])) {
+            throw new Exception('Parameter "' . $key . '" is required and must be a number.');
+        }
+        $id = intval($args[$key]);
+        if ($id < self::OBJECT_ID_MIN || $id > self::OBJECT_ID_MAX) {
+            throw new Exception(sprintf(
+                'Invalid object ID %d: Symcon object IDs are in the range %d..%d. Do not guess IDs — obtain them from find-objects, find-in-registry or find-automations.',
+                $id,
+                self::OBJECT_ID_MIN,
+                self::OBJECT_ID_MAX
+            ));
+        }
+        return $id;
+    }
+
+    /**
+     * Warning-free existence check: range first, IPS_ObjectExists second.
+     * Use wherever an ID comes from an untrusted source (script content,
+     * stale event definitions).
+     */
+    private function IsUsableObjectID(int $id): bool
+    {
+        if ($id < self::OBJECT_ID_MIN || $id > self::OBJECT_ID_MAX) {
+            return false;
+        }
+        return IPS_ObjectExists($id);
     }
 
     // =========================================================================
@@ -1067,7 +1238,7 @@ DESC,
      */
     private function GetAutomation(array $args): array
     {
-        $objectID = intval($args['objectID'] ?? 0);
+        $objectID = $this->RequireObjectID($args, 'objectID');
         if (!IPS_ObjectExists($objectID)) {
             throw new Exception('Object ' . $objectID . ' does not exist.');
         }
@@ -1104,7 +1275,9 @@ DESC,
                 $triggerVariableID = intval($event['TriggerVariableID'] ?? 0);
                 $out['Trigger'] = [
                     'Type' => $this->TriggerTypeName(intval($event['TriggerType'] ?? -1)),
-                    'Variable' => ($triggerVariableID > 0 && IPS_ObjectExists($triggerVariableID))
+                    // Range-checked: a stale definition may carry an ID that is
+                    // out of bounds, which would make IPS_ObjectExists warn.
+                    'Variable' => ($triggerVariableID > 0 && $this->IsUsableObjectID($triggerVariableID))
                         ? $this->DescribeObjectRef($triggerVariableID)
                         : null,
                     'Value' => $event['TriggerValue'] ?? null
@@ -1257,7 +1430,8 @@ DESC,
                 $variableID = intval($rule['VariableID'] ?? 0);
                 $rules[] = [
                     'Kind' => 'variable',
-                    'Variable' => ($variableID > 0 && IPS_ObjectExists($variableID))
+                    // Range-checked, see DescribeEvent.
+                    'Variable' => ($variableID > 0 && $this->IsUsableObjectID($variableID))
                         ? $this->DescribeObjectRef($variableID)
                         : ['ObjectID' => $variableID],
                     'Comparison' => $this->ComparisonSymbol(intval($rule['Comparison'] ?? -1)),
@@ -1383,6 +1557,10 @@ DESC,
     /**
      * Best-effort extraction of referenced objects from script/plan content:
      * five-digit tokens that exist as objects in the tree.
+     *
+     * The range check is not cosmetic: a literal like 86400 (seconds per day)
+     * is a five-digit token too, and handing it to IPS_ObjectExists() emits a
+     * PHP warning that used to corrupt the whole HTTP response.
      */
     private function ExtractObjectRefs(string $content): array
     {
@@ -1392,7 +1570,7 @@ DESC,
         $ids = array_values(array_unique(array_map('intval', $matches[0])));
         $refs = [];
         foreach ($ids as $id) {
-            if (!IPS_ObjectExists($id)) {
+            if (!$this->IsUsableObjectID($id)) {
                 continue;
             }
             $refs[] = $this->DescribeObjectRef($id);
@@ -1409,7 +1587,7 @@ DESC,
      */
     private function FindReferencesToObject(array $args): array
     {
-        $objectID = intval($args['objectID'] ?? 0);
+        $objectID = $this->RequireObjectID($args, 'objectID');
         if (!IPS_ObjectExists($objectID)) {
             throw new Exception('Object ' . $objectID . ' does not exist.');
         }
