@@ -244,7 +244,7 @@ Listet alle IDs untergeordneter Objekte eines Objekts auf.
 ### Suchfunktionen
 
 #### `find-objects` - Flexible Objektsuche
-Sucht Objekte nach verschiedenen Kriterien. Unterstützt mehrere optionale Filter, die kombiniert werden können:
+Durchsucht den gesamten Objektbaum nach verschiedenen Kriterien. Unterstützt mehrere optionale Filter, die kombiniert werden können:
 
 **Filteroptionen:**
 - **name**: Suchtext im Objektnamen (Teilmatch, case-insensitive)
@@ -258,6 +258,17 @@ Sucht Objekte nach verschiedenen Kriterien. Unterstützt mehrere optionale Filte
 - **lastUpdate**: Filter nach letzter Änderung
   - `from`: Unix-Timestamp (in Sekunden)
   - `to`: Unix-Timestamp (in Sekunden)
+
+- **limit**: Maximale Anzahl zurückgegebener Objekte (1 bis 200, Standard 50)
+
+**Rückgabe**
+- `objects` (Liste): Kompakte Treffer mit
+  - `ObjectID`, `ObjectName`, `ObjectType`, `ParentID`
+  - `LocationPath`: Namen aller übergeordneten Objekte, Wurzel zuerst (z.B. "Haus / Erdgeschoss / Wohnzimmer"). Raumnamen stehen meist hier und nicht im Objektnamen
+- `totalMatches` (Integer): Anzahl aller Treffer, auch über `limit` hinaus
+- `truncated` (Boolean): true, wenn nicht alle Treffer zurückgegeben wurden. Dann Filter verfeinern oder `limit` erhöhen
+
+Ungültige Filterwerte werden als Fehler gemeldet. Vollständige Informationen zu einem Treffer liefert `get-object`.
 
 ---
 
