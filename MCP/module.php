@@ -89,8 +89,8 @@ class MCP extends IPSModuleStrict
             return null;
         }
 
-        // A request id must not be null
-        if ($request['id'] === null) {
+        // A request id must be a string or a number that can be sent back unchanged (not null, a boolean, an object or e.g. 1e400)
+        if (!is_string($request['id']) && !is_int($request['id']) && !(is_float($request['id']) && is_finite($request['id']))) {
             http_response_code(400);
             return null;
         }
