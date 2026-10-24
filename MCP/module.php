@@ -475,7 +475,7 @@ DESC,
 Get historical logged values of a Symcon variable within a time range, newest first.
 The variable must exist and have values in the archive. Use find-objects to look up IDs. For long ranges or minimum, maximum, average and consumption prefer get-aggregated-data.
 If "loggingActive" is false, logging was switched off: the data ends with the last logged value, the Duration of the newest entry still counts up to now and the current value may differ, use get-value for it.
-Returns at most "limit" entries (default 1000, max 5000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
+Returns at most "limit" entries (default 1000, max 2000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
 Time range, do not compute Unix timestamps yourself:
 - "period": today, yesterday, last-24h, this-week, last-week, last-7-days, this-month or last-month. Resolved in the server's timezone, weeks start on Monday, last-24h and last-7-days are rolling. Cannot be combined with "from"/"to".
@@ -506,7 +506,7 @@ DESC,
                                     'limit' => [
                                         'type' => 'integer',
                                         'minimum' => 1,
-                                        'maximum' => 5000,
+                                        'maximum' => 2000,
                                         'description' => 'Maximum number of entries to return (default 1000)'
                                     ]
                                 ],
@@ -1019,9 +1019,9 @@ DESC,
                                 throw new Exception('Parameter "arguments" must be an object.');
                             }
                             $variableID = $this->RequireObjectID($arguments, 'variableID');
-                            $limit = $this->ParseInteger($arguments['limit'] ?? 1000, 1, 5000);
+                            $limit = $this->ParseInteger($arguments['limit'] ?? 1000, 1, 2000);
                             if ($limit === null) {
-                                throw new Exception('Parameter "limit" must be an integer in the range 1..5000.');
+                                throw new Exception('Parameter "limit" must be an integer in the range 1..2000.');
                             }
                             $archiveID = $this->GetArchiveID();
                             $this->RequireVariable($variableID);

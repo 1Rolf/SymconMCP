@@ -301,7 +301,7 @@ Holt die Änderungshistorie einer archivierten Variable in einem Zeitbereich, ne
 - `period` (String, optional): Relativer Zeitraum, den der Server in seiner Zeitzone auflöst: `today`, `yesterday`, `last-24h`, `this-week`, `last-week`, `last-7-days`, `this-month`, `last-month`. Wochen beginnen am Montag, `last-24h` und `last-7-days` rechnen ab jetzt zurück. Nicht mit `from`/`to` kombinierbar
 - `from` (String oder Zahl, optional): Beginn als ISO 8601 (z.B. "2026-07-10T00:00:00"), relativer Ausdruck (z.B. "-7 days", "yesterday") oder Unix-Sekunden. Standard: Beginn des Archivs
 - `to` (String oder Zahl, optional): Ende, gleiche Formate. Standard (oder 0): jetzt
-- `limit` (Integer, optional): Maximale Anzahl Einträge (1 bis 5000, Standard 1000)
+- `limit` (Integer, optional): Maximale Anzahl Einträge (1 bis 2000, Standard 1000)
 
 Beide Grenzen sind inklusive. Abgeschlossene Zeiträume wie `yesterday` enden daher um 23:59:59. Der zu Beginn des Zeitraums gültige Wert kann vor `from` geloggt worden sein.
 
