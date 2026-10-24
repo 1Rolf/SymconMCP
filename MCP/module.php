@@ -572,201 +572,239 @@ DESC,
                 break;
 
             case 'tools/call':
+                $toolName = $request['params']['name'] ?? null;
+                if (!is_string($toolName)) {
+                    $error = [
+                        'code' => -32602,
+                        'message' => 'Invalid params: missing tool name'
+                    ];
+                    break;
+                }
+
+                // Symcon functions report failures as PHP warnings. Turn them into exceptions so that they end up in the tool result
+                set_error_handler(function (int $errno, string $errstr): bool {
+                    if (!(error_reporting() & $errno) || in_array($errno, [E_DEPRECATED, E_USER_DEPRECATED])) {
+                        return false;
+                    }
+                    throw new ErrorException($errstr, 0, $errno);
+                });
+
                 $content = [];
-                switch ($request['params']['name']) {
-                    case 'get-name':
-                        $content = [
-                            'name' => IPS_GetName($request['params']['arguments']['objectID'])
-                        ];
-                        break;
+                try {
+                    switch ($toolName) {
+                        case 'get-name':
+                            $content = [
+                                'name' => IPS_GetName($request['params']['arguments']['objectID'])
+                            ];
+                            break;
 
-                    case 'get-object':
-                        $content = [
-                            'info' => IPS_GetObject($request['params']['arguments']['objectID'])
-                        ];
-                        break;
+                        case 'get-object':
+                            $content = [
+                                'info' => IPS_GetObject($request['params']['arguments']['objectID'])
+                            ];
+                            break;
 
-                    case 'get-snapshot':
-		                ini_set('ips.output_buffer', 20*1024*1024);
-                        $content = [
-                            'snapshot' => IPS_GetSnapshot()
-                        ];
-                        break;
+                        case 'get-snapshot':
+    		                ini_set('ips.output_buffer', 20*1024*1024);
+                            $content = [
+                                'snapshot' => IPS_GetSnapshot()
+                            ];
+                            break;
 
-                    case 'find-objects':
-                        $searchName = strtolower($request['params']['arguments']['name'] ?? '');
-                        $types = $request['params']['arguments']['types'] ?? [0,1,2,3,4,5,6];
-                        $usage = $request['params']['arguments']['usage'] ?? '';
-                        $result = [];
+                        case 'find-objects':
+                            $searchName = strtolower($request['params']['arguments']['name'] ?? '');
+                            $types = $request['params']['arguments']['types'] ?? [0,1,2,3,4,5,6];
+                            $usage = $request['params']['arguments']['usage'] ?? '';
+                            $result = [];
 
-                        foreach(json_decode(IPS_GetSnapshot(), true)['objects'] as $index => $object) {
-                            if (!str_contains(strtolower($object['name']), $searchName)) {
-                                continue;
-                            }
-                            if (!in_array($object['type'], $types)) {
-                                continue;
-                            }
+                            foreach(json_decode(IPS_GetSnapshot(), true)['objects'] as $index => $object) {
+                                if (!str_contains(strtolower($object['name']), $searchName)) {
+                                    continue;
+                                }
+                                if (!in_array($object['type'], $types)) {
+                                    continue;
+                                }
 
-                            switch ($usage) {
-                                case 'temperature':
-                                    if ($object['type'] != 2) {
-                                        continue 2;
-                                    }
-                                    $variableID = intval(substr($index, 2));
-                                    $presentation = IPS_GetVariablePresentation($variableID);
-                                    switch ($presentation['PRESENTATION']) {
-                                        case VARIABLE_PRESENTATION_SLIDER:
-                                            if ($presentation['USAGE_TYPE'] != 0) {
+                                switch ($usage) {
+                                    case 'temperature':
+                                        if ($object['type'] != 2) {
+                                            continue 2;
+                                        }
+                                        $variableID = intval(substr($index, 2));
+                                        $presentation = IPS_GetVariablePresentation($variableID);
+                                        switch ($presentation['PRESENTATION']) {
+                                            case VARIABLE_PRESENTATION_SLIDER:
+                                                if ($presentation['USAGE_TYPE'] != 0) {
+                                                    continue 3;
+                                                }
+                                                break;
+
+                                            case VARIABLE_PRESENTATION_VALUE_PRESENTATION:
+                                                if ($presentation['USAGE_TYPE'] != 1) {
+                                                    continue 3;
+                                                }
+                                                break;
+
+                                            default:
                                                 continue 3;
-                                            }
-                                            break;
-
-                                        case VARIABLE_PRESENTATION_VALUE_PRESENTATION:
-                                            if ($presentation['USAGE_TYPE'] != 1) {
-                                                continue 3;
-                                            }
-                                            break;
-
-                                        default:
-                                            continue 3;
-                                    }
-                                    break;
-
-                                default:
-                                    // no usage filter or unknown usage
-                                    break;
-                            }
-
-                            if (isset($request['params']['arguments']['lastUpdate'])) {
-                                $from = $request['params']['arguments']['lastUpdate']['from'] ?? null;
-                                $to = $request['params']['arguments']['lastUpdate']['to'] ?? null;
-                                $objectID = intval(substr($index, 2));
-                                $lastUpdate;
-                                switch ($object['type']) {
-                                    case 2: // Variable
-                                        $lastUpdate = IPS_GetVariable($objectID)['VariableUpdated'];
-                                        break;
-
-                                    case 3: // Script
-                                        $lastUpdate = IPS_GetScript($objectID)['ScriptExecuted'];
+                                        }
                                         break;
 
                                     default:
-                                        // For other object types, last update is not defined, skip
-                                        continue 2;
+                                        // no usage filter or unknown usage
+                                        break;
                                 }
-                                if (isset($from)) {
-                                    if ($lastUpdate < $from) {
-                                        continue;
+
+                                if (isset($request['params']['arguments']['lastUpdate'])) {
+                                    $from = $request['params']['arguments']['lastUpdate']['from'] ?? null;
+                                    $to = $request['params']['arguments']['lastUpdate']['to'] ?? null;
+                                    $objectID = intval(substr($index, 2));
+                                    $lastUpdate;
+                                    switch ($object['type']) {
+                                        case 2: // Variable
+                                            $lastUpdate = IPS_GetVariable($objectID)['VariableUpdated'];
+                                            break;
+
+                                        case 3: // Script
+                                            $lastUpdate = IPS_GetScript($objectID)['ScriptExecuted'];
+                                            break;
+
+                                        default:
+                                            // For other object types, last update is not defined, skip
+                                            continue 2;
+                                    }
+                                    if (isset($from)) {
+                                        if ($lastUpdate < $from) {
+                                            continue;
+                                        }
+                                    }
+                                    if (isset($to)) {
+                                        if ($lastUpdate > $to) {
+                                            continue;
+                                        }
                                     }
                                 }
-                                if (isset($to)) {
-                                    if ($lastUpdate > $to) {
-                                        continue;
-                                    }
+                                $result[] = IPS_GetObject(intval(substr($index, 2)));
+                            }
+                            $content = [
+                                'objects' => $result
+                            ];
+                            break;
+
+                        case 'get-children':
+                            $result = [];
+
+                            foreach (IPS_GetChildrenIDs($request['params']['arguments']['objectID']) as $childID) {
+                                $result[] = IPS_GetObject($childID);
+                            }
+                            $content = [
+                                'children' => $result
+                            ];
+                            break;
+
+                        case 'get-value':
+                            $objectID = $request['params']['arguments']['objectID'];
+                            $result = ($request['params']['arguments']['raw'] ?? false) ? GetValue($objectID) : GetValueFormatted($objectID);
+
+                            $content = [
+                                'value' => $result
+                            ];
+                            break;
+
+                        case 'rename-object':
+                            IPS_SetName($request['params']['arguments']['objectID'], $request['params']['arguments']['newName']);
+                            $content = [
+                                'success' => true
+                            ];
+                            break;
+
+                        case 'switch-boolean':
+                            $this->SendDebug('Switch Variable', json_encode($request['params']['arguments']), 0);
+                            RequestAction($request['params']['arguments']['variableID'], $request['params']['arguments']['value']);
+                            $content = [
+                                'success' => true
+                            ];
+                            break;
+
+                        case 'current-time':
+                            $timestamp = time();
+                            $content = [
+                                'timestamp' => $timestamp,
+                                'formatted' => date('c', $timestamp)  // ISO 8601 format
+                            ];
+                            break;
+
+                        case 'get-logged-data':
+                            $variableID = $request['params']['arguments']['variableID'];
+                            $from = $request['params']['arguments']['from'] ?? 0;
+                            $to = $request['params']['arguments']['to'] ?? 0;
+                        
+                            // Get logged data using AC_GetLoggedValues
+                            $loggedData = AC_GetLoggedValues(IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}')[0], $variableID, $from, $to, 0);
+                        
+                            // Add formatted timestamp to each entry
+                            foreach ($loggedData as &$entry) {
+                                $entry['FormattedTime'] = date('c', $entry['TimeStamp']);
+                            }
+                        
+                            $content = [
+                                'data' => $loggedData
+                            ];
+                            break;
+
+                        case 'get-status-log':
+                            $types = $request['params']['arguments']['types'] ?? [0, 1, 2, 3, 4, 5, 6]; // All types if not specified
+                            $messages = [];
+                        
+                            // Get messages for each requested type
+                            foreach ($types as $type) {
+                                $typeMessages = UC_GetLastLogMessages(IPS_GetInstanceListByModuleID('{B69010EA-96D5-46DF-B885-24821B8C8DBD}')[0], $type);
+                                foreach ($typeMessages as &$message) {
+                                    // Add Type and FormattedTime to each message
+                                    $message['Type'] = $type;
+                                    $message['FormattedTime'] = date('c', $message['TimeStamp']);
                                 }
+                                $messages = array_merge($messages, $typeMessages);
                             }
-                            $result[] = IPS_GetObject(intval(substr($index, 2)));
-                        }
-                        $content = [
-                            'objects' => $result
-                        ];
-                        break;
-
-                    case 'get-children':
-                        $result = [];
-
-                        foreach (IPS_GetChildrenIDs($request['params']['arguments']['objectID']) as $childID) {
-                            $result[] = IPS_GetObject($childID);
-                        }
-                        $content = [
-                            'children' => $result
-                        ];
-                        break;
-
-                    case 'get-value':
-                        $objectID = $request['params']['arguments']['objectID'];
-                        $result = ($request['params']['arguments']['raw'] ?? false) ? GetValue($objectID) : GetValueFormatted($objectID);
-
-                        $content = [
-                            'value' => $result
-                        ];
-                        break;
-
-                    case 'rename-object':
-                        IPS_SetName($request['params']['arguments']['objectID'], $request['params']['arguments']['newName']);
-                        $content = [
-                            'success' => true
-                        ];
-                        break;
-
-                    case 'switch-boolean':
-                        $this->SendDebug('Switch Variable', json_encode($request['params']['arguments']), 0);
-                        RequestAction($request['params']['arguments']['variableID'], $request['params']['arguments']['value']);
-                        $content = [
-                            'success' => true
-                        ];
-                        break;
-
-                    case 'current-time':
-                        $timestamp = time();
-                        $content = [
-                            'timestamp' => $timestamp,
-                            'formatted' => date('c', $timestamp)  // ISO 8601 format
-                        ];
-                        break;
-
-                    case 'get-logged-data':
-                        $variableID = $request['params']['arguments']['variableID'];
-                        $from = $request['params']['arguments']['from'] ?? 0;
-                        $to = $request['params']['arguments']['to'] ?? 0;
                         
-                        // Get logged data using AC_GetLoggedValues
-                        $loggedData = AC_GetLoggedValues(IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}')[0], $variableID, $from, $to, 0);
+                            // Sort messages by timestamp (newest first)
+                            usort($messages, function($a, $b) {
+                                return $b['TimeStamp'] <=> $a['TimeStamp'];
+                            });
                         
-                        // Add formatted timestamp to each entry
-                        foreach ($loggedData as &$entry) {
-                            $entry['FormattedTime'] = date('c', $entry['TimeStamp']);
-                        }
-                        
-                        $content = [
-                            'data' => $loggedData
-                        ];
-                        break;
+                            $content = [
+                                'data' => $messages
+                            ];
+                            break;
 
-                    case 'get-status-log':
-                        $types = $request['params']['arguments']['types'] ?? [0, 1, 2, 3, 4, 5, 6]; // All types if not specified
-                        $messages = [];
-                        
-                        // Get messages for each requested type
-                        foreach ($types as $type) {
-                            $typeMessages = UC_GetLastLogMessages(IPS_GetInstanceListByModuleID('{B69010EA-96D5-46DF-B885-24821B8C8DBD}')[0], $type);
-                            foreach ($typeMessages as &$message) {
-                                // Add Type and FormattedTime to each message
-                                $message['Type'] = $type;
-                                $message['FormattedTime'] = date('c', $message['TimeStamp']);
-                            }
-                            $messages = array_merge($messages, $typeMessages);
-                        }
-                        
-                        // Sort messages by timestamp (newest first)
-                        usort($messages, function($a, $b) {
-                            return $b['TimeStamp'] <=> $a['TimeStamp'];
-                        });
-                        
-                        $content = [
-                            'data' => $messages
-                        ];
-                        break;
-
-                    default:
-                        throw new Exception('Tool not found');
+                        default:
+                            $error = [
+                                'code' => -32602,
+                                'message' => 'Unknown tool: ' . $toolName
+                            ];
+                            break 2;
+                    }
+                } catch (Throwable $e) {
+                    // Execution errors are reported to the model as tool result, so it can correct its input
+                    $this->SendDebug('MCP Tool Error', $e->getMessage(), 0);
+                    $result = [
+                        'content' => [
+                            [
+                                'type' => 'text',
+                                'text' => $e->getMessage()
+                            ]
+                        ],
+                        'isError' => true
+                    ];
+                    break;
+                } finally {
+                    restore_error_handler();
                 }
                 $result = [
                     'content' => [
                         [
                             'type' => 'text',
-                            'text' => json_encode($content)
+                            'text' => json_encode($content, JSON_INVALID_UTF8_SUBSTITUTE)
                         ]
                     ],
                     'structuredContent' => $content,
@@ -809,16 +847,30 @@ DESC,
                 'jsonrpc' => '2.0',
                 'id' => $request['id'],
                 'error' => $error
-            ]);
+            ], JSON_INVALID_UTF8_SUBSTITUTE);
             return;
         }
 
-        $this->SendDebug('MCP Result', json_encode($result), 0);
-
-        echo json_encode([
+        $response = json_encode([
             'result' => $result,
             'jsonrpc' => '2.0',
             'id' => $request['id']
-        ]);
+        ], JSON_INVALID_UTF8_SUBSTITUTE);
+
+        // E.g. NAN or INF cannot be encoded. Never answer with an empty body
+        if ($response === false) {
+            $response = json_encode([
+                'jsonrpc' => '2.0',
+                'id' => $request['id'],
+                'error' => [
+                    'code' => -32603,
+                    'message' => 'Internal error: ' . json_last_error_msg()
+                ]
+            ]);
+        }
+
+        $this->SendDebug('MCP Result', $response, 0);
+
+        echo $response;
     }
 }
