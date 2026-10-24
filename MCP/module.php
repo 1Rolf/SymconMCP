@@ -1250,6 +1250,33 @@ DESC,
             ]);
         }
 
+        // Symcon halts a hook whose output exceeds 1 MiB and sends a plain text notice instead, so answer with an error that still fits
+        $size = strlen($response);
+        if ($size > 1000000) {
+            $this->LogMessage('MCP: Response of ' . $method . ' too large (' . $size . ' bytes), sent an error instead', KL_WARNING);
+            $message = 'Response too large (' . $size . ' bytes, Symcon allows at most 1 MiB). Narrow the request, e.g. a smaller limit or time range.';
+            $response = json_encode($method === 'tools/call' ? [
+                'result' => [
+                    'content' => [
+                        [
+                            'type' => 'text',
+                            'text' => $message
+                        ]
+                    ],
+                    'isError' => true
+                ],
+                'jsonrpc' => '2.0',
+                'id' => $request['id']
+            ] : [
+                'jsonrpc' => '2.0',
+                'id' => $request['id'],
+                'error' => [
+                    'code' => -32603,
+                    'message' => 'Internal error: ' . $message
+                ]
+            ], JSON_INVALID_UTF8_SUBSTITUTE);
+        }
+
         $this->SendDebug('MCP Result', $response, 0);
 
         return $response;
