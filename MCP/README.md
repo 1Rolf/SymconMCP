@@ -13,6 +13,9 @@ Stellt MCP Funktionen zur Verwendung durch Sprachmodelle bereit
 
 * Stellt MCP Funktionen zur Verwendung durch Sprachmodelle bereit
 
+Tools:
+- `find-objects`: Durchsucht den gesamten Objektbaum nach Typ, Name (Teilstring, Groß-/Kleinschreibung egal), Verwendung und letzter Aktualisierung. Liefert kompakte Treffer mit `LocationPath` (Namen der übergeordneten Objekte), begrenzt durch `limit` (Standard 50, max. 200), sowie `totalMatches` und `truncated`.
+
 ### 2. Voraussetzungen
 
 - Symcon ab Version 8.1

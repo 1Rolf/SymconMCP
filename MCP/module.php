@@ -237,16 +237,18 @@ class MCP extends IPSModuleStrict
                             'name' => 'find-objects',
                             'title' => 'Find Symcon Objects by using different kinds of filters',
                             'description' => <<<DESC
-Find Symcon objects based on various criteria. 
+Find Symcon objects based on various criteria. The search covers the entire object tree in a single call, so an empty result means that no object matches this combination of filters. There is no need to verify this by walking the tree with get-children.
 
 The supported filters are:
-- type: an array of possible object types (0: category, 1: instance, 2: variable, 3: script, 4: event, 5: media, 6: link)
-- name: a string that will be searched for in the object names (case insensitive, partial match)
+- types: an array of possible object types (0: category, 1: instance, 2: variable, 3: script, 4: event, 5: media, 6: link)
+- name: a string that will be searched for in the object names (case insensitive including umlauts, partial match)
 - usage: filters by the usage type. Currently the only supported value is "temperature" which lists all objects for temperatures
-- lastUpdate: an object with optional "from" and "to" Unix timestamps (in seconds) to filter objects based on their last update time, for scripts an update refers to an execution
+- lastUpdate: an object with optional "from" and "to" Unix timestamps (in seconds) to filter objects based on their last update time, for scripts an update refers to an execution. If set, only variables and scripts are returned
+- limit: the maximum number of returned objects (1..200, default 50)
 
-If multiple filters are provided, only objects matching all criteria will be returned. 
-For each object, the full object info as returned by IPS_GetObject will be included in the output, containing ObjectID, ObjectName, ObjectType and more.
+If multiple filters are provided, only objects matching all criteria will be returned.
+Each returned object is compact: ObjectID, ObjectName, ObjectType, ParentID and LocationPath. LocationPath contains the names of all ancestors, root first (e.g. "Home / Ground Floor / Living Room"). Room names usually appear in the LocationPath, not in the object name: to find the temperature of the living room, search for the name "temperatur" (matches "Temperatur" and "Temperature") and pick the object whose LocationPath contains the room. Use get-object for the full info of a single object.
+The output also contains totalMatches and truncated. If truncated is true, refine the filters or raise limit.
 DESC,
                             'inputSchema' => [
                                 'type' => 'object',
@@ -254,14 +256,17 @@ DESC,
                                     'types' => [
                                         'type' => 'array',
                                         'items' => [
-                                            'type' => 'number'
+                                            'type' => 'integer',
+                                            'minimum' => 0,
+                                            'maximum' => 6
                                         ]
                                     ],
                                     'name' => [
                                         'type' => 'string'
                                     ],
                                     'usage' => [
-                                        'type' => 'string'
+                                        'type' => 'string',
+                                        'enum' => ['temperature']
                                     ],
                                     'lastUpdate' => [
                                         'type' => 'object',
@@ -277,6 +282,12 @@ DESC,
                                         ],
                                         'required' => [],
                                         'additionalProperties' => false
+                                    ],
+                                    'limit' => [
+                                        'type' => 'integer',
+                                        'minimum' => 1,
+                                        'maximum' => 200,
+                                        'description' => 'Maximum number of returned objects (default 50)'
                                     ]
                                 ],
                                 'required' => [],
@@ -291,22 +302,27 @@ DESC,
                                         'items' => [
                                             'type' => 'object',
                                             'properties' => [
-                                                'ObjectID' => ['type' => 'number'],
-                                                'ObjectType' => ['type' => 'number'],
+                                                'ObjectID' => ['type' => 'integer'],
                                                 'ObjectName' => ['type' => 'string'],
-                                                'ObjectInfo' => ['type' => 'string'],
-                                                'ParentID' => ['type' => 'number'],
-                                                'ObjectPosition' => ['type' => 'number'],
-                                                'ObjectIsHidden' => ['type' => 'boolean'],
-                                                'ObjectIsReadOnly' => ['type' => 'boolean'],
+                                                'ObjectType' => ['type' => 'integer'],
+                                                'ParentID' => ['type' => 'integer'],
+                                                'LocationPath' => ['type' => 'string'],
                                             ],
-                                            'required' => ['ObjectID', 'ObjectType', 'ObjectName', 'ObjectInfo', 'ParentID', 'ObjectPosition', 'ObjectIsHidden', 'ObjectIsReadOnly'],
+                                            'required' => ['ObjectID', 'ObjectName', 'ObjectType', 'ParentID', 'LocationPath'],
                                             'additionalProperties' => true,
                                         ]
+                                    ],
+                                    'totalMatches' => [
+                                        'type' => 'integer'
+                                    ],
+                                    'truncated' => [
+                                        'type' => 'boolean'
                                     ]
                                 ],
                                 'required' => [
-                                    'objects'
+                                    'objects',
+                                    'totalMatches',
+                                    'truncated'
                                 ],
                                 'additionalProperties' => false,
                                 '$schema' => 'http://json-schema.org/draft-07/schema#'
@@ -637,16 +653,52 @@ DESC,
                             break;
 
                         case 'find-objects':
-                            $searchName = strtolower($request['params']['arguments']['name'] ?? '');
-                            $types = $request['params']['arguments']['types'] ?? [0,1,2,3,4,5,6];
-                            $usage = $request['params']['arguments']['usage'] ?? '';
+                            $arguments = $request['params']['arguments'] ?? [];
+                            if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+                                throw new Exception('Parameter "arguments" must be an object.');
+                            }
+                            $searchName = $arguments['name'] ?? '';
+                            if (!is_string($searchName)) {
+                                throw new Exception('Parameter "name" must be a string.');
+                            }
+                            $searchName = mb_strtolower($searchName);
+                            $types = $arguments['types'] ?? [0,1,2,3,4,5,6];
+                            if (!is_array($types)) {
+                                throw new Exception('Parameter "types" must be an array of object types 0..6.');
+                            }
+                            foreach ($types as &$type) {
+                                $type = $this->ParseInteger($type, 0, 6);
+                                if ($type === null) {
+                                    throw new Exception('Parameter "types" must be an array of object types 0..6.');
+                                }
+                            }
+                            unset($type);
+                            $usage = $arguments['usage'] ?? '';
+                            if (!in_array($usage, ['', 'temperature'], true)) {
+                                throw new Exception('Unsupported usage. Supported: "temperature".');
+                            }
+                            if (isset($arguments['lastUpdate'])) {
+                                if (!is_array($arguments['lastUpdate'])) {
+                                    throw new Exception('Parameter "lastUpdate" must be an object with optional "from" and "to" Unix timestamps.');
+                                }
+                                foreach (['from', 'to'] as $key) {
+                                    if (isset($arguments['lastUpdate'][$key]) && !is_int($arguments['lastUpdate'][$key]) && !is_float($arguments['lastUpdate'][$key])) {
+                                        throw new Exception('Parameter "lastUpdate.' . $key . '" must be a Unix timestamp in seconds.');
+                                    }
+                                }
+                            }
+                            $limit = $this->ParseInteger($arguments['limit'] ?? 50, 1, 200);
+                            if ($limit === null) {
+                                throw new Exception('Parameter "limit" must be an integer in the range 1..200.');
+                            }
+                            $totalMatches = 0;
                             $result = [];
 
                             foreach(json_decode(IPS_GetSnapshot(), true)['objects'] as $index => $object) {
-                                if (!str_contains(strtolower($object['name']), $searchName)) {
+                                if (!str_contains(mb_strtolower($object['name']), $searchName)) {
                                     continue;
                                 }
-                                if (!in_array($object['type'], $types)) {
+                                if (!in_array($object['type'], $types, true)) {
                                     continue;
                                 }
 
@@ -684,7 +736,7 @@ DESC,
                                     $from = $request['params']['arguments']['lastUpdate']['from'] ?? null;
                                     $to = $request['params']['arguments']['lastUpdate']['to'] ?? null;
                                     $objectID = intval(substr($index, 2));
-                                    $lastUpdate;
+                                    $lastUpdate = null;
                                     switch ($object['type']) {
                                         case 2: // Variable
                                             $lastUpdate = IPS_GetVariable($objectID)['VariableUpdated'];
@@ -709,10 +761,22 @@ DESC,
                                         }
                                     }
                                 }
-                                $result[] = IPS_GetObject(intval(substr($index, 2)));
+                                $totalMatches++;
+                                if (count($result) < $limit) {
+                                    $objectID = intval(substr($index, 2));
+                                    $result[] = [
+                                        'ObjectID' => $objectID,
+                                        'ObjectName' => $object['name'],
+                                        'ObjectType' => $object['type'],
+                                        'ParentID' => $object['parentID'],
+                                        'LocationPath' => $this->GetLocationPath($objectID)
+                                    ];
+                                }
                             }
                             $content = [
-                                'objects' => $result
+                                'objects' => $result,
+                                'totalMatches' => $totalMatches,
+                                'truncated' => $totalMatches > count($result)
                             ];
                             break;
 
@@ -901,17 +965,40 @@ DESC,
     * (e.g. null becomes the root object 0), so only integers in the valid range are accepted
     */
     private function RequireObjectID(array $arguments, string $key): int {
-        $id = $arguments[$key] ?? null;
-        if (is_string($id) && preg_match('/^\d+\z/', $id)) {
-            $id = intval($id);
-        }
-        // Check the range before casting, a float outside of the integer range cannot be converted
-        if (is_float($id) && $id >= 0 && $id <= 60000 && floor($id) === $id) {
-            $id = intval($id);
-        }
-        if (!is_int($id) || $id < 0 || $id > 60000) {
+        $id = $this->ParseInteger($arguments[$key] ?? null, 0, 60000);
+        if ($id === null) {
             throw new Exception('Parameter "' . $key . '" must be an integer object ID in the range 0..60000. Use find-objects or get-children to look up IDs.');
         }
         return $id;
+    }
+
+    /**
+    * Accept integers, integral floats (e.g. 5.0) and digit strings within the given range, otherwise return null
+    */
+    private function ParseInteger(mixed $value, int $min, int $max): ?int {
+        if (is_string($value) && preg_match('/^\d+\z/', $value)) {
+            $value = intval($value);
+        }
+        // Check the range before casting, a float outside of the integer range cannot be converted
+        if (is_float($value) && $value >= $min && $value <= $max && floor($value) === $value) {
+            $value = intval($value);
+        }
+        if (!is_int($value) || $value < $min || $value > $max) {
+            return null;
+        }
+        return $value;
+    }
+
+    /**
+    * Names of all ancestors of the object, root first and without the root object itself, e.g. "Home / Ground Floor / Living Room"
+    */
+    private function GetLocationPath(int $objectID): string {
+        $names = [];
+        $current = $objectID > 0 ? IPS_GetParent($objectID) : 0;
+        while ($current > 0) {
+            $names[] = IPS_GetName($current);
+            $current = IPS_GetParent($current);
+        }
+        return implode(' / ', array_reverse($names));
     }
 }
