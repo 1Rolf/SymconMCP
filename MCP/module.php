@@ -38,11 +38,37 @@ class MCP extends IPSModuleStrict
     * This function will be called by the hook control. Visibility should be protected!
     */
     protected function ProcessHookData(): void {
+        // Anything printed while handling the request (e.g. PHP deprecation notices) would precede our headers
+        // and turn the response into text/html. Collect it, log it and send only our own body
+        ob_start();
+        $response = null;
+        try {
+            $response = $this->HandleRequest();
+        } catch (Throwable $e) {
+            // The request id is not available here and "id": null is not allowed, so answer without a body
+            http_response_code(500);
+            $this->LogMessage('MCP: Internal error: ' . $e->getMessage() . ' (' . $e->getFile() . ':' . $e->getLine() . ')', KL_ERROR);
+        } finally {
+            $output = ob_get_clean();
+        }
+
+        if (is_string($output) && $output !== '') {
+            $this->SendDebug('MCP Discarded Output', $output, 0);
+            $this->LogMessage('MCP: Discarded unexpected output (' . strlen($output) . ' bytes): ' . substr(trim(preg_replace('/\s+/', ' ', strip_tags($output))), 0, 500), KL_WARNING);
+        }
+
+        if ($response !== null) {
+            header('Content-Type: application/json');
+            echo $response;
+        }
+    }
+
+    private function HandleRequest(): ?string {
         // Only POST carries JSON-RPC messages. GET (SSE stream) and DELETE (session termination) are not offered
         if (($_SERVER['REQUEST_METHOD'] ?? 'POST') !== 'POST') {
             http_response_code(405);
             header('Allow: POST');
-            return;
+            return null;
         }
 
         $request = json_decode(file_get_contents('php://input'), true);
@@ -54,19 +80,19 @@ class MCP extends IPSModuleStrict
         // Invalid JSON or a batch (not supported since protocol version 2025-06-18)
         if (!is_array($request) || array_is_list($request)) {
             http_response_code(400);
-            return;
+            return null;
         }
 
         // Notifications and responses are accepted without a body
         if (!array_key_exists('id', $request) || (!array_key_exists('method', $request) && (array_key_exists('result', $request) || array_key_exists('error', $request)))) {
             http_response_code(202);
-            return;
+            return null;
         }
 
         // A request id must not be null
         if ($request['id'] === null) {
             http_response_code(400);
-            return;
+            return null;
         }
 
         $method = $request['method'] ?? null;
@@ -837,17 +863,14 @@ DESC,
                 break;
         }
 
-        header('Content-Type: application/json');
-
         if ($error !== null) {
             $this->SendDebug('MCP Error', json_encode($error), 0);
 
-            echo json_encode([
+            return json_encode([
                 'jsonrpc' => '2.0',
                 'id' => $request['id'],
                 'error' => $error
             ], JSON_INVALID_UTF8_SUBSTITUTE);
-            return;
         }
 
         $response = json_encode([
@@ -870,6 +893,6 @@ DESC,
 
         $this->SendDebug('MCP Result', $response, 0);
 
-        echo $response;
+        return $response;
     }
 }
