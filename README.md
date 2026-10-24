@@ -312,7 +312,7 @@ Beide Grenzen sind inklusive. Abgeschlossene Zeiträume wie `yesterday` enden da
   - `Duration`: Wie lange dieser Wert gültig war (in Sekunden)
   - `FormattedTime`: ISO 8601 Format für Lesbarkeit
 - `resolvedFrom`, `resolvedTo` (String): Der tatsächlich abgefragte Zeitraum im ISO 8601 Format
-- `loggingActive` (Boolean): false, wenn das Logging der Variable abgeschaltet wurde. Die Daten enden dann mit dem letzten geloggten Wert, der aktuelle Wert kann abweichen (siehe `get-value`)
+- `loggingActive` (Boolean): false, wenn das Logging der Variable abgeschaltet wurde. Die Daten enden dann mit dem letzten geloggten Wert. Dessen `Duration` zählt trotzdem bis jetzt weiter, der aktuelle Wert kann abweichen (siehe `get-value`)
 - `truncated` (Boolean): true, wenn im Zeitraum ältere Werte über `limit` hinaus existieren
 - `nextTo` (Integer, nur bei `truncated`): Wert für `to`, um die nächste ältere Seite abzurufen
 

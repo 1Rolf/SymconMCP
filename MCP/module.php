@@ -474,7 +474,7 @@ DESC,
                             'description' => <<<DESC
 Get historical logged values of a Symcon variable within a time range, newest first.
 The variable must exist and have values in the archive. Use find-objects to look up IDs.
-If "loggingActive" is false, logging was switched off: the data ends with the last logged value and the current value may differ, use get-value for it.
+If "loggingActive" is false, logging was switched off: the data ends with the last logged value, the Duration of the newest entry still counts up to now and the current value may differ, use get-value for it.
 Returns at most "limit" entries (default 1000, max 5000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
 Time range, do not compute Unix timestamps yourself:
