@@ -347,7 +347,7 @@ DESC,
                                 'type' => 'object',
                                 'properties' => [
                                     'value' => [
-                                        'type' => 'any',
+                                        'type' => ['boolean', 'number', 'string'],
                                         'description' => 'The current value of the Symcon variable.'
                                     ]
                                 ],
@@ -400,8 +400,7 @@ DESC,
                             'description' => 'Returns the current Unix timestamp in seconds since January 1, 1970 UTC.',
                             'inputSchema' => [
                                 'type' => 'object',
-                                'properties' => [
-                                ],
+                                'properties' => new stdClass(),
                                 'required' => [
                                 ],
                                 'additionalProperties' => false,
@@ -470,7 +469,7 @@ DESC,
                                                     'description' => 'Unix timestamp when the value was logged'
                                                 ],
                                                 'Value' => [
-                                                    'type' => 'any',
+                                                    'type' => ['boolean', 'number', 'string'],
                                                     'description' => 'The logged value (can be string, number, boolean)'
                                                 ],
                                                 'Duration' => [
