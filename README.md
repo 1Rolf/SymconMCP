@@ -334,7 +334,7 @@ Holt aggregierte Werte einer archivierten Variable (Mittelwert, Minimum und Maxi
 - `variableID` (Integer): Die Variable (Boolean, Integer oder Float). Sie muss existieren und vom Archiv geloggt werden. String-Variablen lassen sich nicht aggregieren
 - `level` (Integer): Aggregationsstufe `0` = Stunde, `1` = Tag, `2` = Woche (ab Montag), `3` = Monat, `4` = Jahr, `5` = 5 Minuten, `6` = 1 Minute
 - `period`, `from`, `to` (optional): Zeitraum wie bei `get-logged-data`
-- `limit` (Integer, optional): Maximale Anzahl Buckets (1 bis 5000, Standard 1000)
+- `limit` (Integer, optional): Maximale Anzahl Buckets (1 bis 1000, Standard 500)
 
 Jeder Bucket, der den Zeitraum berührt, wird vollständig geliefert: `from` wird auf den Beginn seines Buckets zurückgesetzt (Symcon selbst liefert nur Buckets, die im Zeitraum beginnen). Beide Grenzen sind inklusive, ein Bucket, der genau bei `to` beginnt, ist enthalten. `{"variableID": 18543, "level": 1, "period": "yesterday"}` liefert genau einen Tages-Bucket.
 

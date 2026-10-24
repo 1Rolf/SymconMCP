@@ -587,7 +587,7 @@ Returns every bucket that overlaps the range as a whole bucket: "from" is moved 
 Each bucket has TimeStamp (bucket start, the oldest bucket starts with the first logged value), Duration in seconds (the newest bucket may still be running), Avg, Min, Max and MinTime/MaxTime when the minimum and maximum occurred.
 If "aggregationType" is "counter", Avg is the sum of the increments within the bucket (e.g. consumption) and Min/Max are the smallest and largest increment. For boolean variables Avg is the share of time the value was true (0 to 1). String variables cannot be aggregated, use get-logged-data.
 If "loggingActive" is false, logging was switched off: the buckets end with the last logged value and the current value may differ, use get-value for it. Existing buckets remain, but Symcon does not aggregate while logging is off, so buckets may also be missing or incomplete. Use get-logged-data for the logged values.
-Returns at most "limit" buckets (default 1000, max 5000). If "truncated" is true, older buckets exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
+Returns at most "limit" buckets (default 500, max 1000). If "truncated" is true, older buckets exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
 Time range, do not compute Unix timestamps yourself:
 - "period": today, yesterday, last-24h, this-week, last-week, last-7-days, this-month or last-month. Resolved in the server's timezone, weeks start on Monday, last-24h and last-7-days are rolling. Cannot be combined with "from"/"to".
@@ -623,8 +623,8 @@ DESC,
                                     'limit' => [
                                         'type' => 'integer',
                                         'minimum' => 1,
-                                        'maximum' => 5000,
-                                        'description' => 'Maximum number of buckets to return (default 1000)'
+                                        'maximum' => 1000,
+                                        'description' => 'Maximum number of buckets to return (default 500)'
                                     ]
                                 ],
                                 'required' => [
@@ -1085,9 +1085,9 @@ DESC,
                             if ($level === null) {
                                 throw new Exception('Parameter "level" must be an integer in the range 0..6 (0 = hourly, 1 = daily, 2 = weekly, 3 = monthly, 4 = yearly, 5 = 5 minutes, 6 = 1 minute).');
                             }
-                            $limit = $this->ParseInteger($arguments['limit'] ?? 1000, 1, 5000);
+                            $limit = $this->ParseInteger($arguments['limit'] ?? 500, 1, 1000);
                             if ($limit === null) {
-                                throw new Exception('Parameter "limit" must be an integer in the range 1..5000.');
+                                throw new Exception('Parameter "limit" must be an integer in the range 1..1000.');
                             }
                             $archiveID = $this->GetArchiveID();
                             $this->RequireVariable($variableID);
