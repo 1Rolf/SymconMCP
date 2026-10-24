@@ -473,7 +473,8 @@ DESC,
                             'title' => 'Get Logged Variable Data',
                             'description' => <<<DESC
 Get historical logged values of a Symcon variable within a time range, newest first.
-The variable must exist and be logged by the archive. Use find-objects to look up IDs.
+The variable must exist and have values in the archive. Use find-objects to look up IDs.
+If "loggingActive" is false, logging was switched off: the data ends with the last logged value and the current value may differ, use get-value for it.
 Returns at most "limit" entries (default 1000, max 5000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
 Time range, do not compute Unix timestamps yourself:
@@ -551,6 +552,10 @@ DESC,
                                         'type' => 'string',
                                         'description' => 'End of the queried range in ISO 8601 format'
                                     ],
+                                    'loggingActive' => [
+                                        'type' => 'boolean',
+                                        'description' => 'False if logging of the variable was switched off, the data then ends with the last logged value'
+                                    ],
                                     'truncated' => [
                                         'type' => 'boolean',
                                         'description' => 'True if older values exist in the range that are not part of data'
@@ -564,6 +569,7 @@ DESC,
                                     'data',
                                     'resolvedFrom',
                                     'resolvedTo',
+                                    'loggingActive',
                                     'truncated'
                                 ],
                                 'additionalProperties' => false,
@@ -870,11 +876,20 @@ DESC,
                                 throw new Exception('Parameter "limit" must be an integer in the range 1..5000.');
                             }
                             $archiveID = $this->GetArchiveID();
-                            $this->RequireLoggedVariable($archiveID, $variableID);
+                            $this->RequireVariable($variableID);
                             [$from, $to] = $this->ResolveTimeRange($arguments, new DateTimeImmutable());
 
-                            // Get logged data using AC_GetLoggedValues, one more entry than requested to detect truncation
-                            $loggedData = AC_GetLoggedValues($archiveID, $variableID, $from, $to, $limit + 1);
+                            // Get logged data using AC_GetLoggedValues, one more entry than requested to detect truncation.
+                            // Values logged before logging was switched off remain available, so the logging status is only used to explain failures
+                            $loggingActive = AC_GetLoggingStatus($archiveID, $variableID);
+                            try {
+                                $loggedData = AC_GetLoggedValues($archiveID, $variableID, $from, $to, $limit + 1);
+                            } catch (ErrorException $e) {
+                                if (!$loggingActive) {
+                                    throw new Exception('Variable #' . $variableID . ' is not logged by the archive.');
+                                }
+                                throw $e;
+                            }
                             $truncated = count($loggedData) > $limit;
                             $nextTo = null;
                             if ($truncated) {
@@ -903,6 +918,7 @@ DESC,
                                 'data' => $loggedData,
                                 'resolvedFrom' => date('c', $from),
                                 'resolvedTo' => date('c', $to),
+                                'loggingActive' => $loggingActive,
                                 'truncated' => $truncated
                             ];
                             if ($nextTo !== null) {
@@ -1070,17 +1086,14 @@ DESC,
     }
 
     /**
-    * Symcon reports the same error for missing objects, other object types and variables without logging, so check each case
+    * Symcon reports the same archive error for missing objects, other object types and variables without logging, so check the object first
     */
-    private function RequireLoggedVariable(int $archiveID, int $variableID): void {
+    private function RequireVariable(int $variableID): void {
         if (!IPS_VariableExists($variableID)) {
             if (IPS_ObjectExists($variableID)) {
                 throw new Exception('Object #' . $variableID . ' is not a variable.');
             }
             throw new Exception('Variable #' . $variableID . ' does not exist.');
-        }
-        if (!AC_GetLoggingStatus($archiveID, $variableID)) {
-            throw new Exception('Variable #' . $variableID . ' is not logged by the archive.');
         }
     }
 

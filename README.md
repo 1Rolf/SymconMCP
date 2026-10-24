@@ -297,7 +297,7 @@ Gibt die aktuelle Systemzeit in Unix-Timestamp und lesbarem Format zurück.
 Holt die Änderungshistorie einer archivierten Variable in einem Zeitbereich, neueste Werte zuerst.
 
 **Parameter**
-- `variableID` (Integer): Die Variable. Sie muss existieren und vom Archiv geloggt werden
+- `variableID` (Integer): Die Variable. Sie muss existieren und Werte im Archiv haben. Nach dem Abschalten des Loggings bleiben die bisher geloggten Werte abrufbar
 - `period` (String, optional): Relativer Zeitraum, den der Server in seiner Zeitzone auflöst: `today`, `yesterday`, `last-24h`, `this-week`, `last-week`, `last-7-days`, `this-month`, `last-month`. Wochen beginnen am Montag, `last-24h` und `last-7-days` rechnen ab jetzt zurück. Nicht mit `from`/`to` kombinierbar
 - `from` (String oder Zahl, optional): Beginn als ISO 8601 (z.B. "2026-07-10T00:00:00"), relativer Ausdruck (z.B. "-7 days", "yesterday") oder Unix-Sekunden. Standard: Beginn des Archivs
 - `to` (String oder Zahl, optional): Ende, gleiche Formate. Standard (oder 0): jetzt
@@ -312,6 +312,7 @@ Beide Grenzen sind inklusive. Abgeschlossene Zeiträume wie `yesterday` enden da
   - `Duration`: Wie lange dieser Wert gültig war (in Sekunden)
   - `FormattedTime`: ISO 8601 Format für Lesbarkeit
 - `resolvedFrom`, `resolvedTo` (String): Der tatsächlich abgefragte Zeitraum im ISO 8601 Format
+- `loggingActive` (Boolean): false, wenn das Logging der Variable abgeschaltet wurde. Die Daten enden dann mit dem letzten geloggten Wert, der aktuelle Wert kann abweichen (siehe `get-value`)
 - `truncated` (Boolean): true, wenn im Zeitraum ältere Werte über `limit` hinaus existieren
 - `nextTo` (Integer, nur bei `truncated`): Wert für `to`, um die nächste ältere Seite abzurufen
 
@@ -322,7 +323,7 @@ Beide Grenzen sind inklusive. Abgeschlossene Zeiträume wie `yesterday` enden da
 
 Werte mit gleichem Zeitstempel werden nie auf zwei Seiten verteilt. Haben alle Werte einer Seite denselben Zeitstempel, fehlt `nextTo`, dann `limit` erhöhen.
 
-Fehlende Objekte, Objekte, die keine Variable sind, und nicht geloggte Variablen werden mit eigener Fehlermeldung gemeldet, ebenso ungültige Zeitangaben (z.B. Millisekunden oder `from` nach `to`).
+Fehlende Objekte, Objekte, die keine Variable sind, und Variablen ohne Logging und ohne Archivwerte werden mit eigener Fehlermeldung gemeldet, ebenso ungültige Zeitangaben (z.B. Millisekunden oder `from` nach `to`).
 
 ---
 
