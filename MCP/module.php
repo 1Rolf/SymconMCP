@@ -118,7 +118,7 @@ class MCP extends IPSModuleStrict
                                 'type' => 'object',
                                 'properties' => [
                                     'variableID' => [
-                                        'type' => 'number'
+                                        'type' => 'integer'
                                     ],
                                     'value' => [
                                         'type' => 'boolean'
@@ -156,7 +156,7 @@ class MCP extends IPSModuleStrict
                                 'type' => 'object',
                                 'properties' => [
                                     'objectID' => [
-                                        'type' => 'number'
+                                        'type' => 'integer'
                                     ],
                                 ],
                                 'required' => [
@@ -187,7 +187,7 @@ class MCP extends IPSModuleStrict
                                 'type' => 'object',
                                 'properties' => [
                                     'objectID' => [
-                                        'type' => 'number'
+                                        'type' => 'integer'
                                     ],
                                 ],
                                 'required' => [
@@ -320,7 +320,7 @@ DESC,
                                 'type' => 'object',
                                 'properties' => [
                                     'objectID' => [
-                                        'type' => 'number',
+                                        'type' => 'integer',
                                         'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.'
                                     ],
                                 ],
@@ -355,7 +355,7 @@ DESC,
                                 'type' => 'object',
                                 'properties' => [
                                     'objectID' => [
-                                        'type' => 'number',
+                                        'type' => 'integer',
                                         'description' => 'The numeric ID of the parent Symcon object. This is a required integer identifier. Must be a valid objectID from the system.'
                                     ],
                                     'raw' => [
@@ -391,7 +391,7 @@ DESC,
                                 'type' => 'object',
                                 'properties' => [
                                     'objectID' => [
-                                        'type' => 'number',
+                                        'type' => 'integer',
                                         'description' => 'The numeric ID of the Symcon object to rename. This is a required integer identifier. Must be a valid objectID from the system.'
                                     ],
                                     'newName' => [
@@ -464,7 +464,7 @@ DESC,
                                 'type' => 'object',
                                 'properties' => [
                                     'variableID' => [
-                                        'type' => 'number',
+                                        'type' => 'integer',
                                         'description' => 'The numeric ID of the Symcon variable to get logged data from'
                                     ],
                                     'from' => [
@@ -619,13 +619,13 @@ DESC,
                     switch ($toolName) {
                         case 'get-name':
                             $content = [
-                                'name' => IPS_GetName($request['params']['arguments']['objectID'])
+                                'name' => IPS_GetName($this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID'))
                             ];
                             break;
 
                         case 'get-object':
                             $content = [
-                                'info' => IPS_GetObject($request['params']['arguments']['objectID'])
+                                'info' => IPS_GetObject($this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID'))
                             ];
                             break;
 
@@ -719,7 +719,7 @@ DESC,
                         case 'get-children':
                             $result = [];
 
-                            foreach (IPS_GetChildrenIDs($request['params']['arguments']['objectID']) as $childID) {
+                            foreach (IPS_GetChildrenIDs($this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID')) as $childID) {
                                 $result[] = IPS_GetObject($childID);
                             }
                             $content = [
@@ -728,7 +728,7 @@ DESC,
                             break;
 
                         case 'get-value':
-                            $objectID = $request['params']['arguments']['objectID'];
+                            $objectID = $this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID');
                             $result = ($request['params']['arguments']['raw'] ?? false) ? GetValue($objectID) : GetValueFormatted($objectID);
 
                             $content = [
@@ -737,7 +737,7 @@ DESC,
                             break;
 
                         case 'rename-object':
-                            IPS_SetName($request['params']['arguments']['objectID'], $request['params']['arguments']['newName']);
+                            IPS_SetName($this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID'), $request['params']['arguments']['newName']);
                             $content = [
                                 'success' => true
                             ];
@@ -745,7 +745,7 @@ DESC,
 
                         case 'switch-boolean':
                             $this->SendDebug('Switch Variable', json_encode($request['params']['arguments']), 0);
-                            RequestAction($request['params']['arguments']['variableID'], $request['params']['arguments']['value']);
+                            RequestAction($this->RequireObjectID($request['params']['arguments'] ?? [], 'variableID'), $request['params']['arguments']['value']);
                             $content = [
                                 'success' => true
                             ];
@@ -760,7 +760,7 @@ DESC,
                             break;
 
                         case 'get-logged-data':
-                            $variableID = $request['params']['arguments']['variableID'];
+                            $variableID = $this->RequireObjectID($request['params']['arguments'] ?? [], 'variableID');
                             $from = $request['params']['arguments']['from'] ?? 0;
                             $to = $request['params']['arguments']['to'] ?? 0;
                         
@@ -894,5 +894,24 @@ DESC,
         $this->SendDebug('MCP Result', $response, 0);
 
         return $response;
+    }
+
+    /**
+    * Read an object ID from the tool arguments. Symcon silently converts null, booleans and fractions into other IDs
+    * (e.g. null becomes the root object 0), so only integers in the valid range are accepted
+    */
+    private function RequireObjectID(array $arguments, string $key): int {
+        $id = $arguments[$key] ?? null;
+        if (is_string($id) && preg_match('/^\d+\z/', $id)) {
+            $id = intval($id);
+        }
+        // Check the range before casting, a float outside of the integer range cannot be converted
+        if (is_float($id) && $id >= 0 && $id <= 60000 && floor($id) === $id) {
+            $id = intval($id);
+        }
+        if (!is_int($id) || $id < 0 || $id > 60000) {
+            throw new Exception('Parameter "' . $key . '" must be an integer object ID in the range 0..60000. Use find-objects or get-children to look up IDs.');
+        }
+        return $id;
     }
 }
