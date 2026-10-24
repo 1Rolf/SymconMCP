@@ -294,19 +294,35 @@ Gibt die aktuelle Systemzeit in Unix-Timestamp und lesbarem Format zurück.
 ---
 
 #### `get-logged-data` - Historische Daten
-Holt die Änderungshistorie einer Variable in einem Zeitbereich.
+Holt die Änderungshistorie einer archivierten Variable in einem Zeitbereich, neueste Werte zuerst.
 
 **Parameter**
-- `variableID` (Integer): Die Variable
-- `from` (Integer, optional): Start-Timestamp (Unix-Sekunden)
-- `to` (Integer, optional): End-Timestamp (Unix-Sekunden)
+- `variableID` (Integer): Die Variable. Sie muss existieren und vom Archiv geloggt werden
+- `period` (String, optional): Relativer Zeitraum, den der Server in seiner Zeitzone auflöst: `today`, `yesterday`, `last-24h`, `this-week`, `last-week`, `last-7-days`, `this-month`, `last-month`. Wochen beginnen am Montag, `last-24h` und `last-7-days` rechnen ab jetzt zurück. Nicht mit `from`/`to` kombinierbar
+- `from` (String oder Zahl, optional): Beginn als ISO 8601 (z.B. "2026-07-10T00:00:00"), relativer Ausdruck (z.B. "-7 days", "yesterday") oder Unix-Sekunden. Standard: Beginn des Archivs
+- `to` (String oder Zahl, optional): Ende, gleiche Formate. Standard (oder 0): jetzt
+- `limit` (Integer, optional): Maximale Anzahl Einträge (1 bis 5000, Standard 1000)
+
+Beide Grenzen sind inklusive. Abgeschlossene Zeiträume wie `yesterday` enden daher um 23:59:59. Der zu Beginn des Zeitraums gültige Wert kann vor `from` geloggt worden sein.
 
 **Rückgabe**
-- Array mit Einträgen:
+- `data` (Liste) mit Einträgen:
   - `TimeStamp`: Unix-Timestamp
   - `Value`: Der gespeicherte Wert
   - `Duration`: Wie lange dieser Wert gültig war (in Sekunden)
   - `FormattedTime`: ISO 8601 Format für Lesbarkeit
+- `resolvedFrom`, `resolvedTo` (String): Der tatsächlich abgefragte Zeitraum im ISO 8601 Format
+- `truncated` (Boolean): true, wenn im Zeitraum ältere Werte über `limit` hinaus existieren
+- `nextTo` (Integer, nur bei `truncated`): Wert für `to`, um die nächste ältere Seite abzurufen
+
+**Seitenweise abrufen**
+1. `{"variableID": 18543, "period": "last-week", "limit": 100}` liefert bis zu 100 der neuesten Werte, bei weiteren Werten mit `truncated: true` und `nextTo`
+2. `{"variableID": 18543, "from": "<resolvedFrom>", "to": <nextTo>, "limit": 100}` liefert die nächsten Werte
+3. Wiederholen, bis `truncated` false ist
+
+Werte mit gleichem Zeitstempel werden nie auf zwei Seiten verteilt. Haben alle Werte einer Seite denselben Zeitstempel, fehlt `nextTo`, dann `limit` erhöhen.
+
+Fehlende Objekte, Objekte, die keine Variable sind, und nicht geloggte Variablen werden mit eigener Fehlermeldung gemeldet, ebenso ungültige Zeitangaben (z.B. Millisekunden oder `from` nach `to`).
 
 ---
 
