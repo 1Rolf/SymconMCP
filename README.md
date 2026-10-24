@@ -327,6 +327,35 @@ Fehlende Objekte, Objekte, die keine Variable sind, und Variablen ohne Logging u
 
 ---
 
+#### `get-aggregated-data` - Aggregierte Daten
+Holt aggregierte Werte einer archivierten Variable (Mittelwert, Minimum und Maximum je Zeitabschnitt), neueste zuerst. Für lange Zeiträume und Fragen nach Minimum, Maximum, Durchschnitt oder Verbrauch besser geeignet als `get-logged-data`.
+
+**Parameter**
+- `variableID` (Integer): Die Variable (Boolean, Integer oder Float). Sie muss existieren und vom Archiv geloggt werden. String-Variablen lassen sich nicht aggregieren
+- `level` (Integer): Aggregationsstufe `0` = Stunde, `1` = Tag, `2` = Woche (ab Montag), `3` = Monat, `4` = Jahr, `5` = 5 Minuten, `6` = 1 Minute
+- `period`, `from`, `to` (optional): Zeitraum wie bei `get-logged-data`
+- `limit` (Integer, optional): Maximale Anzahl Buckets (1 bis 5000, Standard 1000)
+
+Jeder Bucket, der den Zeitraum berührt, wird vollständig geliefert: `from` wird auf den Beginn seines Buckets zurückgesetzt (Symcon selbst liefert nur Buckets, die im Zeitraum beginnen). Beide Grenzen sind inklusive, ein Bucket, der genau bei `to` beginnt, ist enthalten. `{"variableID": 18543, "level": 1, "period": "yesterday"}` liefert genau einen Tages-Bucket.
+
+**Rückgabe**
+- `data` (Liste) mit Buckets:
+  - `TimeStamp`: Beginn des Buckets (der älteste Bucket beginnt mit dem ersten geloggten Wert)
+  - `Duration`: Abgedeckte Zeit in Sekunden. Der neueste Bucket kann noch laufen
+  - `Avg`, `Min`, `Max`: Zeitgewichteter Mittelwert, Minimum, Maximum. Bei Boolean ist `Avg` der Zeitanteil von true (0 bis 1)
+  - `MinTime`, `MaxTime`: Zeitpunkte von Minimum und Maximum
+  - `FormattedTime`, `FormattedMinTime`, `FormattedMaxTime`: Die Zeitpunkte im ISO 8601 Format
+- `resolvedFrom` (String): Beginn des ersten Buckets im ISO 8601 Format
+- `resolvedTo` (String): Ende des abgefragten Zeitraums im ISO 8601 Format
+- `aggregationType` (String): `standard` oder `counter`. Bei Zählern ist `Avg` die Summe der Zuwächse im Bucket (z.B. Verbrauch), `Min`/`Max` sind der kleinste und größte Zuwachs
+- `loggingActive` (Boolean): false, wenn das Logging der Variable abgeschaltet wurde. Die Buckets enden dann mit dem letzten geloggten Wert, der aktuelle Wert kann abweichen (siehe `get-value`). Vorhandene Buckets bleiben erhalten, Symcon aggregiert aber nicht mehr, Buckets können daher auch fehlen oder unvollständig sein. Die geloggten Werte liefert `get-logged-data`
+- `truncated` (Boolean): true, wenn im Zeitraum ältere Buckets über `limit` hinaus existieren
+- `nextTo` (Integer, nur bei `truncated`): Wert für `to`, um die nächste ältere Seite abzurufen (mit `from` = `resolvedFrom`)
+
+Fehlende Objekte, Objekte, die keine Variable sind, String-Variablen, Variablen ohne Logging, ungültige Stufen und ungültige Zeitangaben werden mit eigener Fehlermeldung gemeldet.
+
+---
+
 #### `get-status-log` - Systemprotokolle
 Holt Meldungen aus dem Symcon-Statusprotokoll.
 

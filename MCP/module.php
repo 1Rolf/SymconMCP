@@ -473,7 +473,7 @@ DESC,
                             'title' => 'Get Logged Variable Data',
                             'description' => <<<DESC
 Get historical logged values of a Symcon variable within a time range, newest first.
-The variable must exist and have values in the archive. Use find-objects to look up IDs.
+The variable must exist and have values in the archive. Use find-objects to look up IDs. For long ranges or minimum, maximum, average and consumption prefer get-aggregated-data.
 If "loggingActive" is false, logging was switched off: the data ends with the last logged value, the Duration of the newest entry still counts up to now and the current value may differ, use get-value for it.
 Returns at most "limit" entries (default 1000, max 5000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
@@ -569,6 +569,154 @@ DESC,
                                     'data',
                                     'resolvedFrom',
                                     'resolvedTo',
+                                    'loggingActive',
+                                    'truncated'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ]
+                        ],
+                        [
+                            'name' => 'get-aggregated-data',
+                            'title' => 'Get Aggregated Variable Data',
+                            'description' => <<<DESC
+Get aggregated values (average, minimum and maximum per time bucket) of a logged Symcon variable within a time range, newest bucket first.
+Prefer this over get-logged-data for long ranges and for questions about minimum, maximum, average or consumption. The variable must be a boolean, integer or float variable with values in the archive. Use find-objects to look up IDs.
+"level": 0 = hourly, 1 = daily, 2 = weekly (starting on Monday), 3 = monthly, 4 = yearly, 5 = 5 minutes, 6 = 1 minute.
+Returns every bucket that overlaps the range as a whole bucket: "from" is moved back to the start of its bucket and "resolvedFrom" shows the actual start. Example: period "yesterday" with level 1 returns exactly one daily bucket.
+Each bucket has TimeStamp (bucket start, the oldest bucket starts with the first logged value), Duration in seconds (the newest bucket may still be running), Avg, Min, Max and MinTime/MaxTime when the minimum and maximum occurred.
+If "aggregationType" is "counter", Avg is the sum of the increments within the bucket (e.g. consumption) and Min/Max are the smallest and largest increment. For boolean variables Avg is the share of time the value was true (0 to 1). String variables cannot be aggregated, use get-logged-data.
+If "loggingActive" is false, logging was switched off: the buckets end with the last logged value and the current value may differ, use get-value for it. Existing buckets remain, but Symcon does not aggregate while logging is off, so buckets may also be missing or incomplete. Use get-logged-data for the logged values.
+Returns at most "limit" buckets (default 1000, max 5000). If "truncated" is true, older buckets exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
+
+Time range, do not compute Unix timestamps yourself:
+- "period": today, yesterday, last-24h, this-week, last-week, last-7-days, this-month or last-month. Resolved in the server's timezone, weeks start on Monday, last-24h and last-7-days are rolling. Cannot be combined with "from"/"to".
+- "from"/"to": ISO 8601 (e.g. "2026-07-10T00:00:00"), a relative expression (e.g. "-7 days", "yesterday") or Unix seconds. Without "from" the range starts at the beginning of the archive, without "to" (or with 0) it ends now.
+Both boundaries are inclusive, a bucket starting exactly at "to" is included. Closed periods like "yesterday" therefore end one second before midnight.
+The response contains the resolved range as resolvedFrom/resolvedTo (ISO 8601). Each bucket includes the original Unix timestamps and formatted ISO 8601 timestamps.
+DESC,
+                            'inputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'variableID' => [
+                                        'type' => 'integer',
+                                        'description' => 'The numeric ID of the Symcon variable to get aggregated data from'
+                                    ],
+                                    'level' => [
+                                        'type' => 'integer',
+                                        'enum' => [0, 1, 2, 3, 4, 5, 6],
+                                        'description' => 'Aggregation level: 0 = hourly, 1 = daily, 2 = weekly, 3 = monthly, 4 = yearly, 5 = 5 minutes, 6 = 1 minute'
+                                    ],
+                                    'period' => [
+                                        'type' => 'string',
+                                        'enum' => ['today', 'yesterday', 'last-24h', 'this-week', 'last-week', 'last-7-days', 'this-month', 'last-month'],
+                                        'description' => 'Relative period resolved by the server. Cannot be combined with from/to'
+                                    ],
+                                    'from' => [
+                                        'type' => ['number', 'string'],
+                                        'description' => 'Range start as ISO 8601, relative expression or Unix seconds, moved back to the start of its bucket. Default: beginning of the archive'
+                                    ],
+                                    'to' => [
+                                        'type' => ['number', 'string'],
+                                        'description' => 'Range end as ISO 8601, relative expression or Unix seconds. Default (or 0): now'
+                                    ],
+                                    'limit' => [
+                                        'type' => 'integer',
+                                        'minimum' => 1,
+                                        'maximum' => 5000,
+                                        'description' => 'Maximum number of buckets to return (default 1000)'
+                                    ]
+                                ],
+                                'required' => [
+                                    'variableID',
+                                    'level'
+                                ],
+                                'additionalProperties' => false,
+                                '$schema' => 'http://json-schema.org/draft-07/schema#'
+                            ],
+                            'outputSchema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'data' => [
+                                        'type' => 'array',
+                                        'items' => [
+                                            'type' => 'object',
+                                            'properties' => [
+                                                'TimeStamp' => [
+                                                    'type' => 'integer',
+                                                    'description' => 'Unix timestamp of the bucket start'
+                                                ],
+                                                'Duration' => [
+                                                    'type' => 'integer',
+                                                    'description' => 'Covered time of the bucket in seconds'
+                                                ],
+                                                'Avg' => [
+                                                    'type' => 'number',
+                                                    'description' => 'Time-weighted average, for counters the sum of the increments'
+                                                ],
+                                                'Min' => [
+                                                    'type' => 'number',
+                                                    'description' => 'Minimum value, for counters the smallest increment'
+                                                ],
+                                                'MinTime' => [
+                                                    'type' => 'integer',
+                                                    'description' => 'Unix timestamp when the minimum occurred'
+                                                ],
+                                                'Max' => [
+                                                    'type' => 'number',
+                                                    'description' => 'Maximum value, for counters the largest increment'
+                                                ],
+                                                'MaxTime' => [
+                                                    'type' => 'integer',
+                                                    'description' => 'Unix timestamp when the maximum occurred'
+                                                ],
+                                                'FormattedTime' => [
+                                                    'type' => 'string',
+                                                    'description' => 'Bucket start in ISO 8601 format'
+                                                ],
+                                                'FormattedMinTime' => [
+                                                    'type' => 'string',
+                                                    'description' => 'MinTime in ISO 8601 format'
+                                                ],
+                                                'FormattedMaxTime' => [
+                                                    'type' => 'string',
+                                                    'description' => 'MaxTime in ISO 8601 format'
+                                                ]
+                                            ],
+                                            'required' => ['TimeStamp', 'Duration', 'Avg', 'Min', 'MinTime', 'Max', 'MaxTime', 'FormattedTime', 'FormattedMinTime', 'FormattedMaxTime']
+                                        ]
+                                    ],
+                                    'resolvedFrom' => [
+                                        'type' => 'string',
+                                        'description' => 'Start of the queried range in ISO 8601 format, moved back to the start of its bucket'
+                                    ],
+                                    'resolvedTo' => [
+                                        'type' => 'string',
+                                        'description' => 'End of the queried range in ISO 8601 format'
+                                    ],
+                                    'aggregationType' => [
+                                        'type' => 'string',
+                                        'enum' => ['standard', 'counter'],
+                                        'description' => 'Aggregation type of the variable in the archive'
+                                    ],
+                                    'loggingActive' => [
+                                        'type' => 'boolean',
+                                        'description' => 'False if logging of the variable was switched off, buckets may then be missing or incomplete'
+                                    ],
+                                    'truncated' => [
+                                        'type' => 'boolean',
+                                        'description' => 'True if older buckets exist in the range that are not part of data'
+                                    ],
+                                    'nextTo' => [
+                                        'type' => 'integer',
+                                        'description' => 'Only if truncated: value for "to" to get the next older page'
+                                    ]
+                                ],
+                                'required' => [
+                                    'data',
+                                    'resolvedFrom',
+                                    'resolvedTo',
+                                    'aggregationType',
                                     'loggingActive',
                                     'truncated'
                                 ],
@@ -926,6 +1074,68 @@ DESC,
                             }
                             break;
 
+                        case 'get-aggregated-data':
+                            $arguments = $request['params']['arguments'] ?? [];
+                            if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+                                throw new Exception('Parameter "arguments" must be an object.');
+                            }
+                            $variableID = $this->RequireObjectID($arguments, 'variableID');
+                            // Symcon returns undocumented data for level 7
+                            $level = $this->ParseInteger($arguments['level'] ?? null, 0, 6);
+                            if ($level === null) {
+                                throw new Exception('Parameter "level" must be an integer in the range 0..6 (0 = hourly, 1 = daily, 2 = weekly, 3 = monthly, 4 = yearly, 5 = 5 minutes, 6 = 1 minute).');
+                            }
+                            $limit = $this->ParseInteger($arguments['limit'] ?? 1000, 1, 5000);
+                            if ($limit === null) {
+                                throw new Exception('Parameter "limit" must be an integer in the range 1..5000.');
+                            }
+                            $archiveID = $this->GetArchiveID();
+                            $this->RequireVariable($variableID);
+                            if (IPS_GetVariable($variableID)['VariableType'] === VARIABLETYPE_STRING) {
+                                throw new Exception('Variable #' . $variableID . ' is a string variable, aggregated values are only available for boolean, integer and float variables. Use get-logged-data.');
+                            }
+                            [$from, $to] = $this->ResolveTimeRange($arguments, new DateTimeImmutable());
+                            // Symcon only returns buckets that start within the range, so include the bucket that contains "from"
+                            if ($from > 0) {
+                                $from = max(0, $this->GetBucketStart($from, $level));
+                            }
+
+                            // Get one more bucket than requested to detect truncation. Logging status only explains failures like in get-logged-data
+                            $loggingActive = AC_GetLoggingStatus($archiveID, $variableID);
+                            try {
+                                $aggregatedData = AC_GetAggregatedValues($archiveID, $variableID, $level, $from, $to, $limit + 1);
+                            } catch (ErrorException $e) {
+                                if (!$loggingActive) {
+                                    throw new Exception('Variable #' . $variableID . ' is not logged by the archive.');
+                                }
+                                throw $e;
+                            }
+                            $truncated = count($aggregatedData) > $limit;
+                            if ($truncated) {
+                                $aggregatedData = array_slice($aggregatedData, 0, $limit);
+                            }
+
+                            foreach ($aggregatedData as &$entry) {
+                                $entry['FormattedTime'] = date('c', $entry['TimeStamp']);
+                                $entry['FormattedMinTime'] = date('c', $entry['MinTime']);
+                                $entry['FormattedMaxTime'] = date('c', $entry['MaxTime']);
+                            }
+                            unset($entry);
+
+                            $content = [
+                                'data' => $aggregatedData,
+                                'resolvedFrom' => date('c', $from),
+                                'resolvedTo' => date('c', $to),
+                                'aggregationType' => AC_GetAggregationType($archiveID, $variableID) === 1 ? 'counter' : 'standard',
+                                'loggingActive' => $loggingActive,
+                                'truncated' => $truncated
+                            ];
+                            if ($truncated) {
+                                // Buckets never share a timestamp, so the next page ends right before the oldest returned bucket
+                                $content['nextTo'] = end($aggregatedData)['TimeStamp'] - 1;
+                            }
+                            break;
+
                         case 'get-status-log':
                             $types = $request['params']['arguments']['types'] ?? [0, 1, 2, 3, 4, 5, 6]; // All types if not specified
                             $messages = [];
@@ -1163,6 +1373,31 @@ DESC,
                 return [$startOfToday->modify('first day of last month')->getTimestamp(), $startOfToday->modify('first day of this month')->getTimestamp() - 1];
             default:
                 throw new Exception('Unknown period. Supported: today, yesterday, last-24h, this-week, last-week, last-7-days, this-month, last-month.');
+        }
+    }
+
+    /**
+    * Start of the aggregation bucket that contains the timestamp, in the server's timezone like the archive
+    */
+    private function GetBucketStart(int $timestamp, int $level): int {
+        $time = (new DateTimeImmutable('@' . $timestamp))->setTimezone(new DateTimeZone(date_default_timezone_get()));
+        // Sub-day buckets are aligned by the local minute and second, which also works within the repeated hour at the end of DST
+        $secondsInHour = intval($time->format('i')) * 60 + intval($time->format('s'));
+        switch ($level) {
+            case 0:
+                return $timestamp - $secondsInHour;
+            case 1:
+                return $time->setTime(0, 0)->getTimestamp();
+            case 2:
+                return $time->modify('monday this week')->setTime(0, 0)->getTimestamp();
+            case 3:
+                return $time->modify('first day of this month')->setTime(0, 0)->getTimestamp();
+            case 4:
+                return $time->setDate(intval($time->format('Y')), 1, 1)->setTime(0, 0)->getTimestamp();
+            case 5:
+                return $timestamp - $secondsInHour % 300;
+            default:
+                return $timestamp - $secondsInHour % 60;
         }
     }
 
