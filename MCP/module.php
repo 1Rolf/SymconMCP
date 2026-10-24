@@ -472,9 +472,15 @@ DESC,
                             'name' => 'get-logged-data',
                             'title' => 'Get Logged Variable Data',
                             'description' => <<<DESC
-Get historical logged data for a Symcon variable within a specified time range.
-Returns all logged values between the from and to timestamps.
-Each data entry includes the original Unix timestamp and a formatted ISO 8601 timestamp for better readability.
+Get historical logged values of a Symcon variable within a time range, newest first.
+The variable must exist and be logged by the archive. Use find-objects to look up IDs.
+Returns at most "limit" entries (default 1000, max 5000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
+
+Time range, do not compute Unix timestamps yourself:
+- "period": today, yesterday, last-24h, this-week, last-week, last-7-days, this-month or last-month. Resolved in the server's timezone, weeks start on Monday, last-24h and last-7-days are rolling. Cannot be combined with "from"/"to".
+- "from"/"to": ISO 8601 (e.g. "2026-07-10T00:00:00"), a relative expression (e.g. "-7 days", "yesterday") or Unix seconds. Without "from" the range starts at the beginning of the archive, without "to" (or with 0) it ends now.
+Both boundaries are inclusive. The value that was valid at "from" may have been logged before "from".
+The response contains the resolved range as resolvedFrom/resolvedTo (ISO 8601). Each data entry includes the original Unix timestamp and a formatted ISO 8601 timestamp.
 DESC,
                             'inputSchema' => [
                                 'type' => 'object',
@@ -483,13 +489,24 @@ DESC,
                                         'type' => 'integer',
                                         'description' => 'The numeric ID of the Symcon variable to get logged data from'
                                     ],
+                                    'period' => [
+                                        'type' => 'string',
+                                        'enum' => ['today', 'yesterday', 'last-24h', 'this-week', 'last-week', 'last-7-days', 'this-month', 'last-month'],
+                                        'description' => 'Relative period resolved by the server. Cannot be combined with from/to'
+                                    ],
                                     'from' => [
-                                        'type' => 'number',
-                                        'description' => 'Start Unix timestamp in seconds'
+                                        'type' => ['number', 'string'],
+                                        'description' => 'Range start as ISO 8601, relative expression or Unix seconds. Default: beginning of the archive'
                                     ],
                                     'to' => [
-                                        'type' => 'number',
-                                        'description' => 'End Unix timestamp in seconds'
+                                        'type' => ['number', 'string'],
+                                        'description' => 'Range end as ISO 8601, relative expression or Unix seconds. Default (or 0): now'
+                                    ],
+                                    'limit' => [
+                                        'type' => 'integer',
+                                        'minimum' => 1,
+                                        'maximum' => 5000,
+                                        'description' => 'Maximum number of entries to return (default 1000)'
                                     ]
                                 ],
                                 'required' => [
@@ -525,10 +542,29 @@ DESC,
                                             ],
                                             'required' => ['TimeStamp', 'Value', 'Duration', 'FormattedTime']
                                         ]
+                                    ],
+                                    'resolvedFrom' => [
+                                        'type' => 'string',
+                                        'description' => 'Start of the queried range in ISO 8601 format'
+                                    ],
+                                    'resolvedTo' => [
+                                        'type' => 'string',
+                                        'description' => 'End of the queried range in ISO 8601 format'
+                                    ],
+                                    'truncated' => [
+                                        'type' => 'boolean',
+                                        'description' => 'True if older values exist in the range that are not part of data'
+                                    ],
+                                    'nextTo' => [
+                                        'type' => 'integer',
+                                        'description' => 'Only if truncated: value for "to" to get the next older page'
                                     ]
                                 ],
                                 'required' => [
-                                    'data'
+                                    'data',
+                                    'resolvedFrom',
+                                    'resolvedTo',
+                                    'truncated'
                                 ],
                                 'additionalProperties' => false,
                                 '$schema' => 'http://json-schema.org/draft-07/schema#'
@@ -824,21 +860,54 @@ DESC,
                             break;
 
                         case 'get-logged-data':
-                            $variableID = $this->RequireObjectID($request['params']['arguments'] ?? [], 'variableID');
-                            $from = $request['params']['arguments']['from'] ?? 0;
-                            $to = $request['params']['arguments']['to'] ?? 0;
-                        
-                            // Get logged data using AC_GetLoggedValues
-                            $loggedData = AC_GetLoggedValues(IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}')[0], $variableID, $from, $to, 0);
-                        
+                            $arguments = $request['params']['arguments'] ?? [];
+                            if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+                                throw new Exception('Parameter "arguments" must be an object.');
+                            }
+                            $variableID = $this->RequireObjectID($arguments, 'variableID');
+                            $limit = $this->ParseInteger($arguments['limit'] ?? 1000, 1, 5000);
+                            if ($limit === null) {
+                                throw new Exception('Parameter "limit" must be an integer in the range 1..5000.');
+                            }
+                            $archiveID = $this->GetArchiveID();
+                            $this->RequireLoggedVariable($archiveID, $variableID);
+                            [$from, $to] = $this->ResolveTimeRange($arguments, new DateTimeImmutable());
+
+                            // Get logged data using AC_GetLoggedValues, one more entry than requested to detect truncation
+                            $loggedData = AC_GetLoggedValues($archiveID, $variableID, $from, $to, $limit + 1);
+                            $truncated = count($loggedData) > $limit;
+                            $nextTo = null;
+                            if ($truncated) {
+                                // Do not split entries with the same timestamp, the next page starts with the complete group
+                                $nextTo = $loggedData[$limit]['TimeStamp'];
+                                $loggedData = array_slice($loggedData, 0, $limit);
+                                $page = $loggedData;
+                                while ($page !== [] && end($page)['TimeStamp'] === $nextTo) {
+                                    array_pop($page);
+                                }
+                                if ($page === []) {
+                                    // The whole page shares one timestamp, paging by time is not possible
+                                    $nextTo = null;
+                                } else {
+                                    $loggedData = $page;
+                                }
+                            }
+
                             // Add formatted timestamp to each entry
                             foreach ($loggedData as &$entry) {
                                 $entry['FormattedTime'] = date('c', $entry['TimeStamp']);
                             }
-                        
+                            unset($entry);
+
                             $content = [
-                                'data' => $loggedData
+                                'data' => $loggedData,
+                                'resolvedFrom' => date('c', $from),
+                                'resolvedTo' => date('c', $to),
+                                'truncated' => $truncated
                             ];
+                            if ($nextTo !== null) {
+                                $content['nextTo'] = $nextTo;
+                            }
                             break;
 
                         case 'get-status-log':
@@ -987,6 +1056,101 @@ DESC,
             return null;
         }
         return $value;
+    }
+
+    /**
+    * ID of the archive control instance
+    */
+    private function GetArchiveID(): int {
+        $archiveIDs = IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}');
+        if ($archiveIDs === []) {
+            throw new Exception('No archive control instance found.');
+        }
+        return $archiveIDs[0];
+    }
+
+    /**
+    * Symcon reports the same error for missing objects, other object types and variables without logging, so check each case
+    */
+    private function RequireLoggedVariable(int $archiveID, int $variableID): void {
+        if (!IPS_VariableExists($variableID)) {
+            if (IPS_ObjectExists($variableID)) {
+                throw new Exception('Object #' . $variableID . ' is not a variable.');
+            }
+            throw new Exception('Variable #' . $variableID . ' does not exist.');
+        }
+        if (!AC_GetLoggingStatus($archiveID, $variableID)) {
+            throw new Exception('Variable #' . $variableID . ' is not logged by the archive.');
+        }
+    }
+
+    /**
+    * Resolve "period" or "from"/"to" into Unix timestamps [from, to]. Both boundaries are inclusive like in AC_GetLoggedValues
+    */
+    private function ResolveTimeRange(array $arguments, DateTimeImmutable $now): array {
+        // Empty strings are treated as omitted parameters
+        $period = $arguments['period'] ?? '';
+        $fromValue = $arguments['from'] ?? '';
+        $toValue = $arguments['to'] ?? '';
+        if ($period !== '') {
+            if (!is_string($period)) {
+                throw new Exception('Parameter "period" must be a string.');
+            }
+            if ($fromValue !== '' || $toValue !== '') {
+                throw new Exception('Use either "period" or "from"/"to", not both.');
+            }
+            return $this->ResolvePeriod($period, $now);
+        }
+        $from = $fromValue !== '' ? $this->ResolveInstant($fromValue, 'from', $now) : 0;
+        $to = $toValue !== '' ? $this->ResolveInstant($toValue, 'to', $now) : 0;
+        if ($to === 0) {
+            $to = $now->getTimestamp();
+        }
+        if ($from > $to) {
+            throw new Exception('Parameter "from" (' . date('c', $from) . ') must not be after "to" (' . date('c', $to) . ').');
+        }
+        return [$from, $to];
+    }
+
+    /**
+    * Accept Unix seconds as number or digit string, otherwise parse ISO 8601 or relative expressions relative to $now
+    */
+    private function ResolveInstant(mixed $value, string $key, DateTimeImmutable $now): int {
+        // Upper bound 2100-01-01 rejects timestamps in milliseconds
+        $timestamp = is_string($value) && !preg_match('/^\d+\z/', $value)
+            ? strtotime($value, $now->getTimestamp())
+            : $this->ParseInteger($value, 0, 4102444800);
+        if (!is_int($timestamp) || $timestamp < 0) {
+            throw new Exception('Parameter "' . $key . '" must be ISO 8601 (e.g. "2026-07-10T00:00:00"), a relative expression (e.g. "-7 days") or Unix seconds in the range 0..4102444800 (not milliseconds).');
+        }
+        return $timestamp;
+    }
+
+    /**
+    * Resolve a period token in the server's timezone. Closed periods end one second before the next period starts
+    */
+    private function ResolvePeriod(string $period, DateTimeImmutable $now): array {
+        $startOfToday = $now->setTime(0, 0);
+        switch ($period) {
+            case 'today':
+                return [$startOfToday->getTimestamp(), $now->getTimestamp()];
+            case 'yesterday':
+                return [$startOfToday->modify('-1 day')->getTimestamp(), $startOfToday->getTimestamp() - 1];
+            case 'last-24h':
+                return [$now->getTimestamp() - 86400, $now->getTimestamp()];
+            case 'this-week':
+                return [$startOfToday->modify('monday this week')->getTimestamp(), $now->getTimestamp()];
+            case 'last-week':
+                return [$startOfToday->modify('monday last week')->getTimestamp(), $startOfToday->modify('monday this week')->getTimestamp() - 1];
+            case 'last-7-days':
+                return [$now->getTimestamp() - 7 * 86400, $now->getTimestamp()];
+            case 'this-month':
+                return [$startOfToday->modify('first day of this month')->getTimestamp(), $now->getTimestamp()];
+            case 'last-month':
+                return [$startOfToday->modify('first day of last month')->getTimestamp(), $startOfToday->modify('first day of this month')->getTimestamp() - 1];
+            default:
+                throw new Exception('Unknown period. Supported: today, yesterday, last-24h, this-week, last-week, last-7-days, this-month, last-month.');
+        }
     }
 
     /**
