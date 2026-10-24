@@ -38,13 +38,49 @@ class MCP extends IPSModuleStrict
     * This function will be called by the hook control. Visibility should be protected!
     */
     protected function ProcessHookData(): void {
+        // Only POST carries JSON-RPC messages. GET (SSE stream) and DELETE (session termination) are not offered
+        if (($_SERVER['REQUEST_METHOD'] ?? 'POST') !== 'POST') {
+            http_response_code(405);
+            header('Allow: POST');
+            return;
+        }
+
         $request = json_decode(file_get_contents('php://input'), true);
         $result = [];
+        $error = null;
 
         $this->SendDebug('MCP Input', json_encode($request), 0);
-        $this->SendDebug('MCP Method', $request['method'], 0);
 
-        switch ($request['method']) {
+        // Invalid JSON or a batch (not supported since protocol version 2025-06-18)
+        if (!is_array($request) || array_is_list($request)) {
+            http_response_code(400);
+            return;
+        }
+
+        // Notifications and responses are accepted without a body
+        if (!array_key_exists('id', $request) || (!array_key_exists('method', $request) && (array_key_exists('result', $request) || array_key_exists('error', $request)))) {
+            http_response_code(202);
+            return;
+        }
+
+        // A request id must not be null
+        if ($request['id'] === null) {
+            http_response_code(400);
+            return;
+        }
+
+        $method = $request['method'] ?? null;
+        if (!is_string($method)) {
+            $error = [
+                'code' => -32600,
+                'message' => 'Invalid Request'
+            ];
+            $method = '';
+        }
+
+        $this->SendDebug('MCP Method', $method, 0);
+
+        switch ($method) {
             case 'tools/list':
                 $result = [
                     'tools' => [
@@ -752,15 +788,30 @@ DESC,
                 ];
                 break;
 
-            case 'notifications/initialized':
-                http_response_code(202);
-                return;
+            case 'ping':
+                $result = new stdClass();
+                break;
 
             default:
+                $error ??= [
+                    'code' => -32601,
+                    'message' => 'Method not found: ' . $method
+                ];
                 break;
         }
 
         header('Content-Type: application/json');
+
+        if ($error !== null) {
+            $this->SendDebug('MCP Error', json_encode($error), 0);
+
+            echo json_encode([
+                'jsonrpc' => '2.0',
+                'id' => $request['id'],
+                'error' => $error
+            ]);
+            return;
+        }
 
         $this->SendDebug('MCP Result', json_encode($result), 0);
 
