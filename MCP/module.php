@@ -244,10 +244,12 @@ The supported filters are:
 - name: a string that will be searched for in the object names (case insensitive including umlauts, partial match)
 - usage: filters by the usage type. Currently the only supported value is "temperature" which lists all objects for temperatures
 - lastUpdate: an object with optional "from" and "to" Unix timestamps (in seconds) to filter objects based on their last update time, for scripts an update refers to an execution. If set, only variables and scripts are returned
+- archived: true returns only variables with values in the archive (usable with get-logged-data and get-aggregated-data), false only variables without. If set, only variables are returned
 - limit: the maximum number of returned objects (1..200, default 50)
 
 If multiple filters are provided, only objects matching all criteria will be returned.
 Each returned object is compact: ObjectID, ObjectName, ObjectType, ParentID and LocationPath. LocationPath contains the names of all ancestors, root first (e.g. "Home / Ground Floor / Living Room"). Room names usually appear in the LocationPath, not in the object name: to find the temperature of the living room, search for the name "temperatur" (matches "Temperatur" and "Temperature") and pick the object whose LocationPath contains the room. Use get-object for the full info of a single object.
+Variables also contain Archived (values in the archive, even if logging was switched off later). Links contain TargetID and TargetObjectType (null if the target does not exist) and, if the target is a variable, its Archived. A link has no value of its own: use its TargetID with get-value, get-logged-data and get-aggregated-data.
 The output also contains totalMatches and truncated. If truncated is true, refine the filters or raise limit.
 DESC,
                             'inputSchema' => [
@@ -283,6 +285,10 @@ DESC,
                                         'required' => [],
                                         'additionalProperties' => false
                                     ],
+                                    'archived' => [
+                                        'type' => 'boolean',
+                                        'description' => 'true: only variables with values in the archive, false: only variables without'
+                                    ],
                                     'limit' => [
                                         'type' => 'integer',
                                         'minimum' => 1,
@@ -307,6 +313,9 @@ DESC,
                                                 'ObjectType' => ['type' => 'integer'],
                                                 'ParentID' => ['type' => 'integer'],
                                                 'LocationPath' => ['type' => 'string'],
+                                                'Archived' => ['type' => 'boolean'],
+                                                'TargetID' => ['type' => 'integer'],
+                                                'TargetObjectType' => ['type' => ['integer', 'null']],
                                             ],
                                             'required' => ['ObjectID', 'ObjectName', 'ObjectType', 'ParentID', 'LocationPath'],
                                             'additionalProperties' => true,
@@ -331,7 +340,7 @@ DESC,
                         [
                             'name' => 'get-children',
                             'title' => 'Get Children',
-                            'description' => 'Get the object info for all children of the Symcon object with the given object ID. For each child, the full object info as returned by IPS_GetObject will be included in the output. Required: You must provide a valid numeric objectID.',
+                            'description' => 'Get the object info for all children of the Symcon object with the given object ID. For each child, the full object info as returned by IPS_GetObject will be included in the output. Variables and links additionally contain Archived, TargetID and TargetObjectType as described for find-objects. Required: You must provide a valid numeric objectID.',
                             'inputSchema' => [
                                 'type' => 'object',
                                 'properties' => [
@@ -366,7 +375,7 @@ DESC,
                         [
                             'name' => 'get-value',
                             'title' => 'Get Value',
-                            'description' => 'Get the current value of the Symcon variable with the given object ID. Required: You must provide a valid numeric objectID. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
+                            'description' => 'Get the current value of the Symcon variable with the given object ID. Required: You must provide a valid numeric objectID. A link has no value: use its TargetID from find-objects or get-children. The function returns the formatted value by default. The formatted value is a human-readable string that includes relevant annotations such as units (e.g., \'25.5 °C\', \'78.2 °F\') or date/time formats (e.g., \'10:30 AM\'). This formatted output is intended for direct display or for programmatic parsing of units or other metadata. As such, the formatted value should usually preferred unless specific constellations, like debugging, require the raw value. In such a special scenario, the raw value can be requested by setting "raw" to true.',
                             'inputSchema' => [
                                 'type' => 'object',
                                 'properties' => [
@@ -473,7 +482,7 @@ DESC,
                             'title' => 'Get Logged Variable Data',
                             'description' => <<<DESC
 Get historical logged values of a Symcon variable within a time range, newest first.
-The variable must exist and have values in the archive. Use find-objects to look up IDs. For long ranges or minimum, maximum, average and consumption prefer get-aggregated-data.
+The variable must exist and have values in the archive (Archived in find-objects and get-children). Use find-objects to look up IDs. For long ranges or minimum, maximum, average and consumption prefer get-aggregated-data.
 If "loggingActive" is false, logging was switched off: the data ends with the last logged value, the Duration of the newest entry still counts up to now and the current value may differ, use get-value for it.
 Returns at most "limit" entries (default 1000, max 2000). If "truncated" is true, older values exist: call again with "from" set to "resolvedFrom" and "to" set to "nextTo" to get the next page.
 
@@ -581,7 +590,7 @@ DESC,
                             'title' => 'Get Aggregated Variable Data',
                             'description' => <<<DESC
 Get aggregated values (average, minimum and maximum per time bucket) of a logged Symcon variable within a time range, newest bucket first.
-Prefer this over get-logged-data for long ranges and for questions about minimum, maximum, average or consumption. The variable must be a boolean, integer or float variable with values in the archive. Use find-objects to look up IDs.
+Prefer this over get-logged-data for long ranges and for questions about minimum, maximum, average or consumption. The variable must be a boolean, integer or float variable with values in the archive (Archived in find-objects and get-children). Use find-objects to look up IDs.
 "level": 0 = hourly, 1 = daily, 2 = weekly (starting on Monday), 3 = monthly, 4 = yearly, 5 = 5 minutes, 6 = 1 minute.
 Returns every bucket that overlaps the range as a whole bucket: "from" is moved back to the start of its bucket and "resolvedFrom" shows the actual start. Example: period "yesterday" with level 1 returns exactly one daily bucket.
 Each bucket has TimeStamp (bucket start, the oldest bucket starts with the first logged value), Duration in seconds (the newest bucket may still be running), Avg, Min, Max and MinTime/MaxTime when the minimum and maximum occurred.
@@ -877,10 +886,15 @@ DESC,
                                     }
                                 }
                             }
+                            $archivedFilter = $arguments['archived'] ?? null;
+                            if (!is_null($archivedFilter) && !is_bool($archivedFilter)) {
+                                throw new Exception('Parameter "archived" must be a boolean.');
+                            }
                             $limit = $this->ParseInteger($arguments['limit'] ?? 50, 1, 200);
                             if ($limit === null) {
                                 throw new Exception('Parameter "limit" must be an integer in the range 1..200.');
                             }
+                            $archivedIDs = $this->GetArchivedVariableIDs();
                             $totalMatches = 0;
                             $result = [];
 
@@ -889,6 +903,9 @@ DESC,
                                     continue;
                                 }
                                 if (!in_array($object['type'], $types, true)) {
+                                    continue;
+                                }
+                                if (isset($archivedFilter) && ($object['type'] != 2 || isset($archivedIDs[intval(substr($index, 2))]) !== $archivedFilter)) {
                                     continue;
                                 }
 
@@ -960,7 +977,7 @@ DESC,
                                         'ObjectType' => $object['type'],
                                         'ParentID' => $object['parentID'],
                                         'LocationPath' => $this->GetLocationPath($objectID)
-                                    ];
+                                    ] + $this->DescribeObject($objectID, $object['type'], $archivedIDs);
                                 }
                             }
                             $content = [
@@ -972,9 +989,12 @@ DESC,
 
                         case 'get-children':
                             $result = [];
+                            $parentID = $this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID');
+                            $archivedIDs = $this->GetArchivedVariableIDs();
 
-                            foreach (IPS_GetChildrenIDs($this->RequireObjectID($request['params']['arguments'] ?? [], 'objectID')) as $childID) {
-                                $result[] = IPS_GetObject($childID);
+                            foreach (IPS_GetChildrenIDs($parentID) as $childID) {
+                                $child = IPS_GetObject($childID);
+                                $result[] = $child + $this->DescribeObject($childID, $child['ObjectType'], $archivedIDs);
                             }
                             $content = [
                                 'children' => $result
@@ -1427,6 +1447,44 @@ DESC,
                 return $timestamp - $secondsInHour % 300;
             default:
                 return $timestamp - $secondsInHour % 60;
+        }
+    }
+
+    /**
+    * IDs of all variables with values in the archive as keys, including variables whose logging was switched off later.
+    * Empty if there is no archive control instance
+    */
+    private function GetArchivedVariableIDs(): array {
+        $archiveIDs = IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}');
+        if ($archiveIDs === []) {
+            return [];
+        }
+        return array_fill_keys(array_column(AC_GetAggregationVariables($archiveIDs[0], false), 'VariableID'), true);
+    }
+
+    /**
+    * Additional facts for find-objects and get-children: whether a variable has archived values and where a link points to.
+    * A link has no value of its own, so the follow-up tools need the target
+    */
+    private function DescribeObject(int $objectID, int $objectType, array $archivedIDs): array {
+        switch ($objectType) {
+            case 2: // Variable
+                return ['Archived' => isset($archivedIDs[$objectID])];
+
+            case 6: // Link
+                $targetID = IPS_GetLink($objectID)['TargetID'];
+                if (!IPS_ObjectExists($targetID)) {
+                    return ['TargetID' => $targetID, 'TargetObjectType' => null];
+                }
+                $targetType = IPS_GetObject($targetID)['ObjectType'];
+                $description = ['TargetID' => $targetID, 'TargetObjectType' => $targetType];
+                if ($targetType == 2) {
+                    $description['Archived'] = isset($archivedIDs[$targetID]);
+                }
+                return $description;
+
+            default:
+                return [];
         }
     }
 

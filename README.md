@@ -206,6 +206,8 @@ Holt den aktuellen Wert einer Symcon-Variable. Gibt standardmäßig den formatie
 **Rückgabe**
 - `value`: Der aktuelle Wert der Variable
 
+Ein Link hat keinen eigenen Wert. Für Links die `TargetID` aus `find-objects` oder `get-children` verwenden.
+
 ---
 
 #### `get-name` - Namen auslesen
@@ -231,13 +233,13 @@ Holt vollständige Informationen zu einem Symcon-Objekt (entspricht [IPS_GetObje
 ---
 
 #### `get-children` - Unterobjekte auslesen
-Listet alle IDs untergeordneter Objekte eines Objekts auf.
+Listet alle direkt untergeordneten Objekte eines Objekts auf.
 
 **Parameter**
 - `objectID` (Integer): Die ID des Objekts
 
 **Rückgabe**
-- `children` (Liste): Liste der IDs aller untergeordneter Objekte
+- `children` (Liste): Je Unterobjekt die Infos analog zur Rückgabe von IPS_GetObject, bei Variablen und Links zusätzlich `Archived`, `TargetID` und `TargetObjectType` wie bei `find-objects`
 
 ---
 
@@ -259,12 +261,16 @@ Durchsucht den gesamten Objektbaum nach verschiedenen Kriterien. Unterstützt me
   - `from`: Unix-Timestamp (in Sekunden)
   - `to`: Unix-Timestamp (in Sekunden)
 
+- **archived**: `true` = nur Variablen mit Werten im Archiv (nutzbar mit `get-logged-data` und `get-aggregated-data`), `false` = nur Variablen ohne. Wenn gesetzt, werden nur Variablen zurückgegeben
+
 - **limit**: Maximale Anzahl zurückgegebener Objekte (1 bis 200, Standard 50)
 
 **Rückgabe**
 - `objects` (Liste): Kompakte Treffer mit
   - `ObjectID`, `ObjectName`, `ObjectType`, `ParentID`
   - `LocationPath`: Namen aller übergeordneten Objekte, Wurzel zuerst (z.B. "Haus / Erdgeschoss / Wohnzimmer"). Raumnamen stehen meist hier und nicht im Objektnamen
+  - bei Variablen `Archived` (Boolean): Werte im Archiv vorhanden, auch wenn das Logging später abgeschaltet wurde
+  - bei Links `TargetID` und `TargetObjectType` (`null`, wenn das Ziel nicht existiert), bei einer Variable als Ziel auch deren `Archived`. Ein Link hat keinen eigenen Wert: für `get-value`, `get-logged-data` und `get-aggregated-data` die `TargetID` verwenden
 - `totalMatches` (Integer): Anzahl aller Treffer, auch über `limit` hinaus
 - `truncated` (Boolean): true, wenn nicht alle Treffer zurückgegeben wurden. Dann Filter verfeinern oder `limit` erhöhen
 
