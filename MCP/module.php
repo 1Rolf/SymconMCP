@@ -1250,11 +1250,13 @@ DESC,
             ]);
         }
 
-        // Symcon halts a hook whose output exceeds 1 MiB and sends a plain text notice instead, so answer with an error that still fits
+        // Symcon halts a hook whose output exceeds ips.output_buffer (1 MiB unless raised, e.g. by get-snapshot) and sends a plain text notice instead,
+        // so answer with an error that still fits. Keep a margin of 5 % below the limit
+        $limit = intval(ini_get('ips.output_buffer')) ?: 1048576;
         $size = strlen($response);
-        if ($size > 1000000) {
+        if ($size > $limit - intdiv($limit, 20)) {
             $this->LogMessage('MCP: Response of ' . $method . ' too large (' . $size . ' bytes), sent an error instead', KL_WARNING);
-            $message = 'Response too large (' . $size . ' bytes, Symcon allows at most 1 MiB). Narrow the request, e.g. a smaller limit or time range.';
+            $message = 'Response too large (' . $size . ' bytes, Symcon allows at most ' . $limit . ' bytes). Narrow the request, e.g. a shorter time range or a smaller limit.';
             $response = json_encode($method === 'tools/call' ? [
                 'result' => [
                     'content' => [
