@@ -331,7 +331,7 @@ Fehlende Objekte, Objekte, die keine Variable sind, und Variablen ohne Logging u
 Holt aggregierte Werte einer archivierten Variable (Mittelwert, Minimum und Maximum je Zeitabschnitt), neueste zuerst. Für lange Zeiträume und Fragen nach Minimum, Maximum, Durchschnitt oder Verbrauch besser geeignet als `get-logged-data`.
 
 **Parameter**
-- `variableID` (Integer): Die Variable (Boolean, Integer oder Float). Sie muss existieren und vom Archiv geloggt werden. String-Variablen lassen sich nicht aggregieren
+- `variableID` (Integer): Die Variable (Boolean, Integer oder Float). Sie muss existieren und Werte im Archiv haben. Nach dem Abschalten des Loggings bleiben die vorhandenen Buckets abrufbar. String-Variablen lassen sich nicht aggregieren
 - `level` (Integer): Aggregationsstufe `0` = Stunde, `1` = Tag, `2` = Woche (ab Montag), `3` = Monat, `4` = Jahr, `5` = 5 Minuten, `6` = 1 Minute
 - `period`, `from`, `to` (optional): Zeitraum wie bei `get-logged-data`
 - `limit` (Integer, optional): Maximale Anzahl Buckets (1 bis 1000, Standard 500)
@@ -345,7 +345,7 @@ Jeder Bucket, der den Zeitraum berührt, wird vollständig geliefert: `from` wir
   - `Avg`, `Min`, `Max`: Zeitgewichteter Mittelwert, Minimum, Maximum. Bei Boolean ist `Avg` der Zeitanteil von true (0 bis 1)
   - `MinTime`, `MaxTime`: Zeitpunkte von Minimum und Maximum
   - `FormattedTime`, `FormattedMinTime`, `FormattedMaxTime`: Die Zeitpunkte im ISO 8601 Format
-- `resolvedFrom` (String): Beginn des ersten Buckets im ISO 8601 Format
+- `resolvedFrom` (String): Beginn des abgefragten Zeitraums im ISO 8601 Format, auf den Beginn seines Buckets zurückgesetzt (ohne `from`: Beginn des Archivs)
 - `resolvedTo` (String): Ende des abgefragten Zeitraums im ISO 8601 Format
 - `aggregationType` (String): `standard` oder `counter`. Bei Zählern ist `Avg` die Summe der Zuwächse im Bucket (z.B. Verbrauch), `Min`/`Max` sind der kleinste und größte Zuwachs
 - `loggingActive` (Boolean): false, wenn das Logging der Variable abgeschaltet wurde. Die Buckets enden dann mit dem letzten geloggten Wert, der aktuelle Wert kann abweichen (siehe `get-value`). Vorhandene Buckets bleiben erhalten, Symcon aggregiert aber nicht mehr, Buckets können daher auch fehlen oder unvollständig sein. Die geloggten Werte liefert `get-logged-data`
