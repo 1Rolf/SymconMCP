@@ -224,7 +224,8 @@ class MCP extends IPSModuleStrict
                                 'type' => 'object',
                                 'properties' => [
                                     'snapshot' => [
-                                        'type' => 'object'
+                                        'type' => 'string',
+                                        'description' => 'JSON-encoded snapshot'
                                     ]
                                 ],
                                 'required' => [

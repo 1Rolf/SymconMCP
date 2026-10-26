@@ -284,7 +284,7 @@ Holt einen Snapshot des gesamten Symcon-Systems mit Daten zu allen Objekten.
 **Warnung:** Diese Funktion gibt sehr große Datenmengen zurück und sollte sparsam verwendet werden. Bisher konnte darüber hinaus kein Modell den Snapshot sinnvoll nutzen.
 
 **Rückgabe**
-- `snapshot` (Objekt): Der gesamte Snapshot des Systems
+- `snapshot` (String): Der gesamte Snapshot des Systems als JSON-Text
 
 ---
 
