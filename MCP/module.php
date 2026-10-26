@@ -1317,14 +1317,15 @@ DESC,
     * Reject arguments that are not declared in the input schema, including keys of nested objects (e.g. lastUpdate.from)
     */
     private function RequireKnownArguments(mixed $arguments, array $schema, string $path): void {
-        if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
-            throw new Exception('Parameter "' . ($path === '' ? 'arguments' : $path) . '" must be an object.');
-        }
         $properties = (array) ($schema['properties'] ?? []);
+        $supported = $properties === [] ? 'This tool takes no parameters.' : 'Supported: ' . implode(', ', array_keys($properties)) . '.';
+        if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+            throw new Exception('Parameter "' . ($path === '' ? 'arguments' : $path) . '" must be an object. ' . $supported);
+        }
         foreach ($arguments as $key => $value) {
             $name = ($path === '' ? '' : $path . '.') . $key;
             if (!array_key_exists($key, $properties)) {
-                throw new Exception('Unknown parameter "' . $name . '". ' . ($properties === [] ? 'This tool takes no parameters.' : 'Supported: ' . implode(', ', array_keys($properties)) . '.'));
+                throw new Exception('Unknown parameter "' . $name . '". ' . $supported);
             }
             if ($value !== null && isset($properties[$key]['properties'])) {
                 $this->RequireKnownArguments($value, $properties[$key], $name);
