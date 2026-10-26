@@ -108,6 +108,7 @@ class MCP extends IPSModuleStrict
 
         switch ($method) {
             case 'tools/list':
+            case 'tools/call':
                 $result = [
                     'tools' => [
                         [
@@ -594,14 +595,28 @@ DESC,
                         ]
                     ]
                 ];
-                break;
+                if ($method === 'tools/list') {
+                    break;
+                }
 
-            case 'tools/call':
+                // tools/call: the tool list above is the reference for the accepted arguments
+                $inputSchemas = array_column($result['tools'], 'inputSchema', 'name');
+                $result = [];
                 $toolName = $request['params']['name'] ?? null;
                 if (!is_string($toolName)) {
                     $error = [
                         'code' => -32602,
                         'message' => 'Invalid params: missing tool name'
+                    ];
+                    break;
+                }
+
+                // The CallToolRequest schema requires an object. A missing value or null counts as no arguments
+                $arguments = $request['params']['arguments'] ?? [];
+                if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+                    $error = [
+                        'code' => -32602,
+                        'message' => 'Invalid params: arguments must be an object'
                     ];
                     break;
                 }
@@ -616,6 +631,10 @@ DESC,
 
                 $content = [];
                 try {
+                    // A misspelled or outdated parameter (e.g. a filter) would otherwise be ignored silently
+                    if (isset($inputSchemas[$toolName])) {
+                        $this->RequireKnownArguments($arguments, $inputSchemas[$toolName], '');
+                    }
                     switch ($toolName) {
                         case 'get-name':
                             $content = [
@@ -923,6 +942,26 @@ DESC,
         $this->SendDebug('MCP Result', $response, 0);
 
         return $response;
+    }
+
+    /**
+    * Reject arguments that are not declared in the input schema, including keys of nested objects (e.g. lastUpdate.from)
+    */
+    private function RequireKnownArguments(mixed $arguments, array $schema, string $path): void {
+        $properties = (array) ($schema['properties'] ?? []);
+        $supported = $properties === [] ? 'This tool takes no parameters.' : 'Supported: ' . implode(', ', array_keys($properties)) . '.';
+        if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+            throw new Exception('Parameter "' . ($path === '' ? 'arguments' : $path) . '" must be an object. ' . $supported);
+        }
+        foreach ($arguments as $key => $value) {
+            $name = ($path === '' ? '' : $path . '.') . $key;
+            if (!array_key_exists($key, $properties)) {
+                throw new Exception('Unknown parameter "' . $name . '". ' . $supported);
+            }
+            if ($value !== null && isset($properties[$key]['properties'])) {
+                $this->RequireKnownArguments($value, $properties[$key], $name);
+            }
+        }
     }
 
     /**
