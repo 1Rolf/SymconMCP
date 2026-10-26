@@ -826,6 +826,16 @@ DESC,
                     break;
                 }
 
+                // The CallToolRequest schema requires an object. A missing value or null counts as no arguments
+                $arguments = $request['params']['arguments'] ?? [];
+                if (!is_array($arguments) || ($arguments !== [] && array_is_list($arguments))) {
+                    $error = [
+                        'code' => -32602,
+                        'message' => 'Invalid params: arguments must be an object'
+                    ];
+                    break;
+                }
+
                 // Symcon functions report failures as PHP warnings. Turn them into exceptions so that they end up in the tool result
                 set_error_handler(function (int $errno, string $errstr): bool {
                     if (!(error_reporting() & $errno) || in_array($errno, [E_DEPRECATED, E_USER_DEPRECATED])) {
@@ -838,7 +848,7 @@ DESC,
                 try {
                     // A misspelled or outdated parameter (e.g. a filter) would otherwise be ignored silently
                     if (isset($inputSchemas[$toolName])) {
-                        $this->RequireKnownArguments($request['params']['arguments'] ?? [], $inputSchemas[$toolName], '');
+                        $this->RequireKnownArguments($arguments, $inputSchemas[$toolName], '');
                     }
                     switch ($toolName) {
                         case 'get-name':
