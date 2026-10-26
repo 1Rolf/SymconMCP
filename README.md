@@ -358,7 +358,7 @@ Jeder Bucket, der den Zeitraum berührt, wird vollständig geliefert: `from` wir
 - `truncated` (Boolean): true, wenn im Zeitraum ältere Buckets über `limit` hinaus existieren
 - `nextTo` (Integer, nur bei `truncated`): Wert für `to`, um die nächste ältere Seite abzurufen (mit `from` = `resolvedFrom`)
 
-Fehlende Objekte, Objekte, die keine Variable sind, String-Variablen, Variablen ohne Logging, ungültige Stufen und ungültige Zeitangaben werden mit eigener Fehlermeldung gemeldet.
+Fehlende Objekte, Objekte, die keine Variable sind, String-Variablen, Variablen ohne Logging und ohne Archivwerte, ungültige Stufen und ungültige Zeitangaben werden mit eigener Fehlermeldung gemeldet.
 
 ---
 
