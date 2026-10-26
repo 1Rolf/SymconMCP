@@ -13,7 +13,7 @@ Stellt MCP Funktionen zur Verwendung durch Sprachmodelle bereit
 
 * Stellt MCP Funktionen zur Verwendung durch Sprachmodelle bereit
 
-Tools:
+Tools (Auswahl, alle Tools siehe [README](../README.md#verwendbare-mcp-funktionen)):
 - `find-objects`: Durchsucht den gesamten Objektbaum nach Typ, Name (Teilstring, Groß-/Kleinschreibung egal), Verwendung, letzter Aktualisierung und Archivierung (`archived`). Liefert kompakte Treffer mit `LocationPath` (Namen der übergeordneten Objekte), begrenzt durch `limit` (Standard 50, max. 200), sowie `totalMatches` und `truncated`. Variablen enthalten `Archived` (Werte im Archiv), Links ihr Ziel (`TargetID`, `TargetObjectType`).
 - `get-children`: Liefert die direkt untergeordneten Objekte mit den Infos aus IPS_GetObject, ergänzt um `Archived` und Link-Ziele wie bei `find-objects`.
 - `get-logged-data`: Liefert geloggte Werte einer archivierten Variable, neueste zuerst. Zeitraum per `period` (z. B. `yesterday`, `last-week`) oder `from`/`to` als ISO 8601, relativer Ausdruck oder Unix-Zeit; die Antwort nennt den aufgelösten Zeitraum (`resolvedFrom`/`resolvedTo`) und ob noch geloggt wird (`loggingActive`). Begrenzt durch `limit` (Standard 1000, max. 2000), weitere Werte über `truncated` und `nextTo` seitenweise abrufbar.
